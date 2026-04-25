@@ -29,6 +29,7 @@ subprocess.run([
     "openenv", "stable-baselines3", "sb3-contrib", "gymnasium",
     "sentence-transformers", "openai", "pyyaml", "trl",
     "transformers", "datasets", "torch",
+    "matplotlib", "audioop-lts", "huggingface_hub",
 ], check=True)
 print("Packages OK")
 
@@ -395,3 +396,100 @@ else:
 print("\n" + "="*55)
 print("All learning features verified. Ready for final checkpoint.")
 print("="*55)
+
+# ============================================================
+# CELL 8 — Push trained model + artifacts to HuggingFace Hub
+#
+# Requires HF_TOKEN secret set in Colab:
+#   Runtime > Manage secrets  (key icon in left sidebar)
+#   Name: HF_TOKEN   Value: hf_xxxxx  (write token from hf.co/settings/tokens)
+#
+# Target repo: garvitsachdeva/spindleflow-rl
+# ============================================================
+import numpy as np
+from huggingface_hub import HfApi, CommitOperationAdd
+from google.colab import userdata
+
+HF_TOKEN = userdata.get("HF_TOKEN")
+if not HF_TOKEN:
+    raise RuntimeError("HF_TOKEN not set. Go to Runtime > Manage secrets and add it.")
+
+HF_REPO = "garvitsachdeva/spindleflow-rl"
+api = HfApi(token=HF_TOKEN)
+_repo_name = HF_REPO.split("/")[-1]
+
+print(f"Pushing to https://huggingface.co/{HF_REPO} ...")
+api.create_repo(repo_id=_repo_name, repo_type="model", exist_ok=True)
+
+ep   = reward_logger.episode_rewards
+f5   = float(np.mean(ep[:5]))  if len(ep) >= 5 else 0.0
+l5   = float(np.mean(ep[-5:])) if len(ep) >= 5 else 0.0
+total_steps_run = int(_cfg.get("training", {}).get("total_timesteps", 500_000))
+
+readme_text = f"""---
+license: mit
+tags:
+  - reinforcement-learning
+  - stable-baselines3
+  - sb3-contrib
+  - gymnasium
+  - multi-agent
+  - openenv
+library_name: stable-baselines3
+---
+
+# SpindleFlow RL — Delegation Policy
+
+LSTM PPO agent trained on SpindleFlow-v0 (OpenEnv).
+
+## Training summary
+| Metric | Value |
+|---|---|
+| Algorithm | RecurrentPPO (SB3 + sb3-contrib) |
+| Total timesteps | {total_steps_run:,} |
+| Episodes completed | {len(ep)} |
+| First-5 mean reward | {f5:.4f} |
+| Last-5 mean reward | {l5:.4f} |
+| Improvement | {l5 - f5:+.4f} |
+
+![Reward Curve](reward_curve.png)
+
+## Load
+```python
+from sb3_contrib import RecurrentPPO
+from huggingface_hub import hf_hub_download
+model = RecurrentPPO.load(hf_hub_download("{HF_REPO}", "spindleflow_model.zip"))
+```
+"""
+
+readme_path = "/content/README_model.md"
+with open(readme_path, "w") as f:
+    f.write(readme_text)
+
+candidates = [
+    ("/content/spindleflow_colab_demo.zip",     "spindleflow_model.zip"),
+    ("/content/vec_normalize_colab.pkl",         "vec_normalize.pkl"),
+    ("/content/reward_curve.png",                "reward_curve.png"),
+    ("/content/demo/assets/reward_curve.json",   "reward_curve.json"),
+    (readme_path,                                "README.md"),
+]
+
+ops = [
+    CommitOperationAdd(path_in_repo=dst, path_or_fileobj=src)
+    for src, dst in candidates
+    if os.path.exists(src)
+]
+
+api.create_commit(
+    repo_id=HF_REPO,
+    repo_type="model",
+    operations=ops,
+    commit_message="Add trained SpindleFlow RL policy (Colab T4)",
+    token=HF_TOKEN,
+)
+
+print(f"Uploaded {len(ops)} files.")
+print(f"Model live at: https://huggingface.co/{HF_REPO}")
+print(f"First-5 mean reward : {f5:.4f}")
+print(f"Last-5  mean reward : {l5:.4f}")
+print(f"Improvement         : {l5 - f5:+.4f}")
