@@ -1,3 +1,14 @@
+---
+title: SpindleFlow RL
+emoji: 🤖
+colorFrom: blue
+colorTo: purple
+sdk: gradio
+sdk_version: "4.40.0"
+app_file: app.py
+pinned: false
+---
+
 # SpindleFlow RL — Delegation Policy RL Environment
 
 An RL environment that trains an orchestrator to **learn** delegation strategy,
