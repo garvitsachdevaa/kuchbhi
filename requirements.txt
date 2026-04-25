@@ -13,4 +13,4 @@ datasets>=2.19.0
 huggingface_hub>=0.23.0
 gradio>=4.40.0
 matplotlib>=3.8.0
-pyaudioop>=0.2.0
+audioop-lts
