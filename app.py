@@ -24,18 +24,26 @@ import threading
 import json, time
 import numpy as np
 
-# ── Shared state ─────────────────────────────────────────────
-_logs   = []
-_status = {"phase": "starting", "done": False, "error": None}
-_LOG_FILE = "/home/user/app/assets/training_log.txt"
+# ── Persistent state (file-based so Gradio worker processes can read it) ─────
+_LOG_FILE    = "/home/user/app/assets/training_log.txt"
+_STATUS_FILE = "/home/user/app/assets/training_status.json"
+
+
+def _write_status(phase, done=False, error=None):
+    try:
+        os.makedirs("/home/user/app/assets", exist_ok=True)
+        with open(_STATUS_FILE, "w", encoding="utf-8") as f:
+            json.dump({"phase": phase, "done": done, "error": error}, f)
+    except Exception:
+        pass
 
 
 def _log(msg: str):
     ts = time.strftime("%H:%M:%S")
     line = f"[{ts}] {msg}"
-    _logs.append(line)
     print(line, flush=True)
     try:
+        os.makedirs("/home/user/app/assets", exist_ok=True)
         with open(_LOG_FILE, "a", encoding="utf-8") as f:
             f.write(line + "\n")
     except Exception:
@@ -253,7 +261,7 @@ def _training_thread():
         total_steps = int(cfg.get("training", {}).get("total_timesteps", 500_000))
         _log(f"Total steps : {total_steps:,}")
         _log("Training started...\n")
-        _status["phase"] = "training"
+        _write_status("training")
 
         reward_logger  = RewardLogger(curriculum=curriculum)
         checkpoint_cb  = CheckpointCallback(
@@ -283,7 +291,7 @@ def _training_thread():
         _log(f"Final curriculum: {curriculum.progress_str()}")
 
         # ── Reward curve ────────────────────────────────────
-        _status["phase"] = "saving"
+        _write_status("saving")
         ep_rewards = reward_logger.episode_rewards or [0.0]
         episodes   = list(range(len(ep_rewards)))
         window     = max(50, len(ep_rewards) // 20)
@@ -320,7 +328,7 @@ def _training_thread():
         _log("Reward curve saved.")
 
         # ── Push everything to HF Hub ────────────────────────
-        _status["phase"] = "uploading"
+        _write_status("uploading")
         _log(f"Pushing to https://huggingface.co/{HF_REPO} ...")
 
         ep  = reward_logger.episode_rewards
@@ -390,15 +398,13 @@ model = RecurrentPPO.load(hf_hub_download("{HF_REPO}", "spindleflow_model.zip"))
 
         _log(f"Uploaded {len(ops)} files.")
         _log(f"Model live at: https://huggingface.co/{HF_REPO}")
-        _status["done"] = True
-        _status["phase"] = "complete"
+        _write_status("complete", done=True)
 
     except Exception as exc:
         import traceback
         _log(f"ERROR: {exc}")
         _log(traceback.format_exc())
-        _status["error"] = str(exc)
-        _status["phase"] = "error"
+        _write_status("error", error=str(exc))
 
 
 # ── Start training immediately on Space boot ──────────────────
@@ -408,18 +414,29 @@ _thread.start()
 
 # ── Gradio UI ─────────────────────────────────────────────────
 def _get_state():
-    phase = _status["phase"]
-    if _status["done"]:
+    # Read from files — works across Gradio worker processes
+    try:
+        with open(_STATUS_FILE, "r", encoding="utf-8") as f:
+            s = json.load(f)
+        phase, done, error = s.get("phase", "starting"), s.get("done", False), s.get("error")
+    except Exception:
+        phase, done, error = "starting", False, None
+
+    try:
+        with open(_LOG_FILE, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        log_text = "".join(lines[-120:])
+    except Exception:
+        log_text = ""
+
+    if done:
         label = "✅  Training complete — model pushed to HF Hub"
-    elif _status["error"]:
-        label = f"❌  Error: {_status['error']}"
+    elif error:
+        label = f"❌  Error: {error}"
     else:
-        icons = {
-            "starting": "⏳", "training": "🔄",
-            "saving": "💾", "uploading": "📤",
-        }
+        icons = {"starting": "⏳", "training": "🔄", "saving": "💾", "uploading": "📤"}
         label = f"{icons.get(phase, '🔄')}  {phase.capitalize()}..."
-    return label, "\n".join(_logs[-120:])
+    return label, log_text
 
 
 CSS = """
