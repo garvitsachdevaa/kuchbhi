@@ -423,24 +423,31 @@ def _get_state():
 
 
 CSS = """
-.status-box textarea { font-size: 1.1rem !important; font-weight: 600 !important; }
-.log-box textarea    { font-family: monospace !important; font-size: 0.82rem !important; }
-.title-md h1         { font-size: 2rem !important; margin-bottom: 0.2rem !important; }
-.subtitle-md p       { color: #64748b !important; margin-top: 0 !important; }
+body, .gradio-container { background: #0f172a !important; }
+.status-box textarea {
+    font-size: 1.05rem !important; font-weight: 700 !important;
+    background: #1e293b !important; color: #f1f5f9 !important;
+    border: 1px solid #334155 !important;
+}
+.log-box textarea {
+    font-family: 'Courier New', monospace !important;
+    font-size: 0.8rem !important; line-height: 1.5 !important;
+    background: #0f172a !important; color: #94a3b8 !important;
+    border: 1px solid #1e293b !important;
+}
+h1 { color: #f1f5f9 !important; }
+p, label { color: #94a3b8 !important; }
 footer { display: none !important; }
 """
 
-with gr.Blocks(title="SpindleFlow RL Training", theme=gr.themes.Soft(), css=CSS) as demo:
-    with gr.Column(elem_classes="title-md"):
-        gr.Markdown("# 🤖 SpindleFlow RL — Training Dashboard")
-    with gr.Column(elem_classes="subtitle-md"):
-        gr.Markdown(
-            "Training runs automatically on startup. "
-            "Click **Refresh** every 30 s to see live progress. "
-            "When complete the model is pushed to your HF Hub repo."
-        )
+with gr.Blocks(title="SpindleFlow RL Training", css=CSS) as demo:
+    gr.Markdown("# 🤖 SpindleFlow RL — Training Dashboard")
+    gr.Markdown(
+        "Auto-refreshes every 10 s. "
+        "When complete the trained model is pushed to your HF Hub repo."
+    )
 
-    with gr.Row(equal_height=True):
+    with gr.Row():
         status_box = gr.Textbox(
             label="Status",
             value="⏳  Starting...",
@@ -448,7 +455,7 @@ with gr.Blocks(title="SpindleFlow RL Training", theme=gr.themes.Soft(), css=CSS)
             scale=4,
             elem_classes="status-box",
         )
-        refresh_btn = gr.Button("🔄  Refresh", scale=1, variant="primary", size="lg")
+        refresh_btn = gr.Button("🔄  Refresh now", scale=1, variant="primary")
 
     log_box = gr.Textbox(
         label="Training log (last 120 lines)",
@@ -459,6 +466,8 @@ with gr.Blocks(title="SpindleFlow RL Training", theme=gr.themes.Soft(), css=CSS)
         elem_classes="log-box",
     )
 
+    timer = gr.Timer(value=10)
+    timer.tick(fn=_get_state, outputs=[status_box, log_box])
     refresh_btn.click(fn=_get_state, outputs=[status_box, log_box])
     demo.load(fn=_get_state, outputs=[status_box, log_box])
 
