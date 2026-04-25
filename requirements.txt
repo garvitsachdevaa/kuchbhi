@@ -1,0 +1,15 @@
+openenv>=0.1.0
+stable-baselines3>=2.3.0
+sb3-contrib>=2.3.0
+gymnasium>=0.29.1
+torch>=2.2.0
+numpy>=1.26.0
+sentence-transformers>=3.0.0
+openai>=1.30.0
+pyyaml>=6.0.1
+transformers>=4.40.0
+trl>=0.8.6
+datasets>=2.19.0
+huggingface_hub>=0.23.0
+gradio>=4.40.0
+matplotlib>=3.8.0

@@ -1,0 +1,82 @@
+# Bootstrap specialist catalog — seed set for training.
+# NOT a closed enum. New specialists are added via SpecialistRegistry.add_specialist()
+# at runtime without any policy changes. The policy operates on embeddings, not IDs.
+
+metadata:
+  version: "1.0"
+  note: "Seed catalog only. Registry is the source of truth at runtime."
+  sector_name: "software_engineering"
+  sector_description: "Software product development including frontend, backend, databases, devops, and security engineering"
+  contradiction_pairs:
+    - ["postgresql", "mongodb"]
+    - ["react", "vue"]
+    - ["rest", "graphql"]
+    - ["microservices", "monolith"]
+    - ["kubernetes", "docker-compose"]
+    - ["typescript", "javascript"]
+
+specialists:
+  - id: frontend_react
+    role: "Frontend React Developer"
+    description: "Specialist in React frontend development, hooks, state management, component architecture, and UI/UX patterns. Handles TypeScript React, Tailwind CSS, and modern frontend tooling."
+    complexity_affinity: ["simple", "moderate", "complex"]
+    avg_latency_ms: 4000
+
+  - id: backend_api
+    role: "Backend API Engineer"
+    description: "Expert in REST API design, Node.js/Express backend services, authentication patterns, and API versioning. Handles database integration and server-side logic."
+    complexity_affinity: ["simple", "moderate", "complex"]
+    avg_latency_ms: 4500
+
+  - id: database_architect
+    role: "Database Architect"
+    description: "Specialist in database schema design, SQL and NoSQL databases, query optimization, indexing strategies, and data modeling for scalable systems."
+    complexity_affinity: ["moderate", "complex", "enterprise"]
+    avg_latency_ms: 3500
+
+  - id: devops_engineer
+    role: "DevOps Engineer"
+    description: "Expert in CI/CD pipelines, containerization with Docker/Kubernetes, infrastructure as code, deployment strategies, and cloud platform configuration."
+    complexity_affinity: ["moderate", "complex", "enterprise"]
+    avg_latency_ms: 4000
+
+  - id: security_analyst
+    role: "Security Analyst"
+    description: "Specialist in application security, OWASP top 10, authentication/authorization patterns, encryption, and compliance frameworks like GDPR and SOC2."
+    complexity_affinity: ["moderate", "complex", "enterprise"]
+    avg_latency_ms: 3500
+
+  - id: product_strategist
+    role: "Product Strategist"
+    description: "Expert in product requirements, user story mapping, market positioning, feature prioritization, and translating business objectives into technical specifications."
+    complexity_affinity: ["simple", "moderate"]
+    avg_latency_ms: 3000
+
+  - id: ux_designer
+    role: "UX Designer"
+    description: "Specialist in user experience design, wireframing, information architecture, accessibility (WCAG), and design system creation."
+    complexity_affinity: ["simple", "moderate"]
+    avg_latency_ms: 3000
+
+  - id: tech_writer
+    role: "Technical Writer"
+    description: "Expert in technical documentation, API documentation, developer guides, README files, and structured content for engineering teams."
+    complexity_affinity: ["atomic", "simple", "moderate"]
+    avg_latency_ms: 2500
+
+# --- HOW TO ADD A NEW SPECIALIST AT RUNTIME ---
+# You do NOT need to edit this file or retrain the policy.
+# Call this from Python:
+#
+#   registry.add_specialist({
+#     "id": "ml_engineer",
+#     "role": "ML Engineer",
+#     "description": "Specialist in model training, PyTorch, MLOps pipelines, feature engineering, and model deployment.",
+#     "complexity_affinity": ["moderate", "complex", "enterprise"],
+#     "avg_latency_ms": 5000,
+#   })
+#
+# The registry computes the embedding on the fly. The policy immediately
+# represents this specialist via its embedding vector — no retraining needed.
+# The SPAWN_SPECIALIST meta-action (Head 1) allows the agent to request
+# new specialists to be onboarded between episodes.

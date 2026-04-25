@@ -1,0 +1,16 @@
+TECHNICAL:
+  standard: "Both {a} and {b} have valid technical merits. Recommendation: Use {a}'s approach for {a_use_case}, and {b}'s approach for {b_use_case}. Document this decision."
+  defer_to_a: "Technical conflict resolved in favour of {a}. {b}'s approach is noted for future consideration."
+  synthesise: "Synthesise both {a} and {b}'s technical positions into a unified recommendation that covers {a_use_case} and {b_use_case}."
+
+FACTUAL:
+  recency: "A factual discrepancy exists. The more recent claim from {a} is preferred. {b}'s claim should be verified against documentation."
+  specificity: "A factual discrepancy exists. The more specific claim is preferred. Cross-reference both {a} and {b} against primary sources."
+
+PRIORITY:
+  phase_based: "Priority conflict: adopt {b}'s simpler approach now with a clear path to {a}'s optimisation later."
+  stakeholder: "Priority conflict: escalate to stakeholder. Present {a}'s performance case and {b}'s simplicity case."
+
+SCOPE:
+  contract: "{a} owns core feature; {b} owns integration. Define an interface contract between them."
+  merge: "Merge the scope overlap: create a shared component owned jointly by {a} and {b}."

@@ -1,0 +1,98 @@
+training:
+  seed: 42
+  total_timesteps: 500000
+  n_envs: 4
+  device: "auto"  # "cuda" if available, else "cpu"
+
+ppo:
+  learning_rate: 3.0e-4
+  n_steps: 512
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+
+lstm:
+  hidden_size: 256
+  num_layers: 1
+
+curriculum:
+  # Performance-gated advancement (replaces fixed episode budgets)
+  phase_advance_window:      200    # wider window = more stable advancement signal
+  phase1_advance_threshold:  0.60   # agent must consistently beat baseline before Phase 2
+  phase2_advance_threshold:  1.00   # must learn multi-specialist strategy before Phase 3
+  phase_min_episodes:        500    # minimum episodes before advancement check
+  # Legacy fields kept for Colab/README compatibility; no longer controls advancement
+  phase1_episodes: 200
+  phase2_episodes: 400
+  phase3_episodes: 600
+  phase1_task_types: ["atomic", "simple"]
+  phase2_task_types: ["moderate"]
+  phase3_task_types: ["complex", "enterprise"]
+
+reward:
+  latency_weight: 0.05
+  efficiency_base_penalty: 0.05
+  failure_penalty_timeout: 0.3
+  failure_penalty_error: 0.2
+  conflict_unresolved_penalty: 0.1
+  conflict_resolved_bonus: 0.05
+  consistency_bonus_weight: 0.1
+  explanation_bonus: 0.05
+  conflict_similarity_threshold: 0.25   # cosine sim below which two outputs are flagged as conflicting
+  tier_map:                             # complexity class → reward tier (0=structural, 1=embedding, 2=LLM judge)
+    atomic:     0
+    simple:     1
+    moderate:   1
+    complex:    2
+    enterprise: 2
+  tier2_sample_rates:                   # probability of escalating moderate episodes to Tier 2
+    moderate:   0.30
+    complex:    1.00
+    enterprise: 1.00
+
+environment:
+  max_steps_per_episode: 10
+  max_delegation_depth: 2   # 2 for hackathon demo; architecture supports 4
+  max_specialists_per_episode: 6
+  specialist_timeout_ms: 8000
+  spawn_threshold: 0.50          # all-MiniLM-L6-v2 related-domain sims are 0.35–0.70; 0.50 triggers meaningfully
+  auto_spawn_specialists: true   # set false to disable spawning entirely
+  spawn_max_total: 8             # hard cap on lifetime spawns — prevents registry bloat over 100k steps
+  spawn_cooldown_episodes: 20    # minimum episodes between consecutive spawns
+  spawn_memory_path: "data/spawn_memory.jsonl"
+  spawn_memory_max_entries: 500
+  spawn_memory_min_reward: 0.0   # only retrieve past spawns that achieved >= this reward
+
+sector:
+  name: "software_engineering"   # Change this to switch domains
+  description: "Software product development including frontend, backend, databases, devops, and security"
+  use_llm_task_generation: true  # Set false to fall back to catalog-derived tasks
+  llm_task_model: "gpt-4o-mini"
+  task_cache_size: 200           # Large cache reduces refill frequency; background thread handles refills
+  # Technology stack injected into ambiguous task descriptions by TaskDecomposer.
+  # Change these when switching sectors (e.g. healthcare: HL7/FHIR, Spring Boot, PostgreSQL).
+  default_assumptions:
+    frontend: "React/TypeScript"
+    backend:  "Node.js/Express"
+    database: "PostgreSQL"
+    team_size: "5–10 engineers"
+
+agents:
+  resolution_memory_path: "data/resolution_memory.jsonl"
+  resolution_bandit_epsilon: 0.15       # exploration rate for template selection
+  resolution_bandit_min_samples: 5      # min observations before exploiting
+
+specialist_improvement:
+  memory_path: "data/specialist_memory.json"
+  improve_every_n_episodes: 100       # finetuner runs after this many completed episodes
+  min_entries_to_improve: 10          # specialist needs at least this many memory entries
+  improve_avg_reward_threshold: 0.70  # only improve if avg episode reward is below this
+
+demo:
+  generalist_model: "gpt-4o-mini"
+  tier2_judge_model: "gpt-4o-mini"

@@ -1,0 +1,28 @@
+{
+  "task": "Design a microservices authentication system with JWT, OAuth2, and rate limiting",
+  "quality_policy": {
+    "latency_weight": 0.0,
+    "specialists_called": [
+      "security_analyst",
+      "backend_api",
+      "database_architect",
+      "devops_engineer",
+      "tech_writer"
+    ],
+    "mode": "sequential",
+    "estimated_time_s": 180,
+    "delegation_path": "orchestrator -> security_analyst -> backend_api -> database_architect -> devops_engineer -> tech_writer"
+  },
+  "latency_policy": {
+    "latency_weight": 0.15,
+    "specialists_called": [
+      "security_analyst",
+      "backend_api",
+      "devops_engineer"
+    ],
+    "mode": "parallel",
+    "estimated_time_s": 45,
+    "delegation_path": "orchestrator -> [security_analyst + backend_api + devops_engineer] (parallel)"
+  },
+  "demo_script": "We can tune what the policy optimizes for.\n[show quality policy graph]: quality-optimized, 5 specialists, sequential, 3 minutes.\n[show latency policy graph]: latency-balanced, 3 specialists, parallel, 45 seconds.\nSame training infrastructure, different reward signal. That's what makes this a product."
+}

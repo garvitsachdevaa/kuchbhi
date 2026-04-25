@@ -1,0 +1,20 @@
+tier2_judge:
+  model: "gpt-4o-mini"
+  max_tokens: 100
+  dimensions:
+    addresses_task:
+      description: "Does the output address what was asked?"
+      scale: "1=completely misses, 5=fully addresses"
+      min: 1
+      max: 5
+    domain_depth:
+      description: "How expert/specific is the domain knowledge?"
+      scale: "1=generic/shallow, 5=expert-level specific"
+      min: 1
+      max: 5
+    actionable:
+      description: "Can a practitioner immediately act on this?"
+      scale: "1=yes, 0=no"
+      min: 0
+      max: 1
+  normalisation_denominator: 11   # sum of max scores: 5+5+1

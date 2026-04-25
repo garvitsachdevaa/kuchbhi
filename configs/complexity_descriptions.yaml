@@ -1,0 +1,5 @@
+atomic:     "a very simple, single-step"
+simple:     "a straightforward, well-scoped"
+moderate:   "a multi-component, realistic"
+complex:    "a complex, multi-system"
+enterprise: "a large-scale, enterprise-grade"

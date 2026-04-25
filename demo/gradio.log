@@ -1,0 +1,7 @@
+Booting SpindleFlow RL Dashboard...
+Pre-loading environment and embeddings (~10s)...
+* Running on local URL:  http://0.0.0.0:7860
+* To create a public link, set `share=True` in `launch()`.
+[SpecialistRegistry] Loading embedding model: all-MiniLM-L6-v2
+[SpecialistRegistry] Embedded 8 specialists (dim=384)
+[SpecialistRegistry] Loading embedding model: all-MiniLM-L6-v2

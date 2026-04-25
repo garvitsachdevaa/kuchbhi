@@ -1,0 +1,31 @@
+atomic:
+  - "summarize"
+  - "list"
+  - "what is"
+  - "define"
+  - "explain"
+
+simple:
+  - "create"
+  - "write"
+  - "build a"
+  - "design a simple"
+
+moderate:
+  - "full-stack"
+  - "api with"
+  - "system with"
+  - "microservice"
+
+complex:
+  - "enterprise"
+  - "scalable"
+  - "distributed"
+  - "multi-tenant"
+
+enterprise:
+  - "compliance"
+  - "soc2"
+  - "gdpr"
+  - "regulated"
+  - "audit"
