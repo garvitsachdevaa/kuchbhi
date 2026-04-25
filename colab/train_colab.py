@@ -37,7 +37,7 @@ if result.returncode != 0:
     raise RuntimeError("pip install failed — see output above")
 print("Packages OK")
 
-REPO = "/content/kuchbhi/spindleflow-rl"
+REPO = "/content/kuchbhi"
 if not os.path.isdir(REPO):
     subprocess.run(["git", "clone",
                     "https://github.com/garvitsachdevaa/kuchbhi.git"],
