@@ -1,27 +1,27 @@
 # ============================================================
 # SpindleFlow RL — Colab Training Script
 #
-# STEP 0 — Before running anything:
-#   Runtime → Change runtime type → T4 GPU
-#
-# STEP 1 — Add secrets (key icon in left sidebar):
-#   HF_TOKEN       = hf_xxxx   (write token from hf.co/settings/tokens)
-#   OPENAI_API_KEY = sk-xxxx   (needed for task generation + finetuner)
-#   Toggle "Notebook access" ON for both.
-#
-# STEP 2 — Create a new notebook, paste each CELL block below
-#           into a separate code cell, run top to bottom.
+# BEFORE ANYTHING:
+#   1. Runtime → Change runtime type → T4 GPU
+#   2. Key icon (left sidebar) → Manage secrets → add:
+#        HF_TOKEN       = hf_xxxx  (write token: hf.co/settings/tokens)
+#        OPENAI_API_KEY = sk-xxxx
+#      Toggle "Notebook access" ON for both.
+#   3. Create a new Colab notebook.
+#   4. Copy each CELL block below into its own code cell.
+#   5. Run cells top to bottom, one at a time.
 # ============================================================
 
 
 # ============================================================
-# CELL 1 — Install packages + clone repo
+# CELL 1 — Install packages + clone/update repo
 # ============================================================
 import subprocess, os, sys
 
-print(f"Python {sys.version}")
+print(f"Python {sys.version}\n")
 
-# audioop-lts is for Python 3.13+ only — Colab runs 3.12
+# ── Install packages ─────────────────────────────────────────
+# audioop-lts is only for Python 3.13+ (Colab uses 3.12)
 packages = [
     "openenv", "stable-baselines3", "sb3-contrib", "gymnasium",
     "sentence-transformers", "openai", "pyyaml", "trl",
@@ -30,25 +30,36 @@ packages = [
 if sys.version_info >= (3, 13):
     packages.append("audioop-lts")
 
-result = subprocess.run(["pip", "install"] + packages, capture_output=True, text=True)
+print("Installing packages...")
+result = subprocess.run(["pip", "install"] + packages,
+                        capture_output=True, text=True)
 if result.returncode != 0:
     print(result.stdout[-3000:])
     print(result.stderr[-3000:])
     raise RuntimeError("pip install failed — see output above")
-print("Packages OK")
+print("Packages OK\n")
 
+# ── Clone or update repo ─────────────────────────────────────
+# The GitHub repo IS the spindleflow-rl project root.
+# It clones to /content/kuchbhi/ — that IS the working directory.
 REPO = "/content/kuchbhi"
-if not os.path.isdir(REPO):
-    subprocess.run(["git", "clone",
-                    "https://github.com/garvitsachdevaa/kuchbhi.git"],
-                   cwd="/content", check=True)
+GIT_URL = "https://github.com/garvitsachdevaa/kuchbhi.git"
+
+if not os.path.isdir(os.path.join(REPO, ".git")):
+    # Not cloned yet — do a fresh clone
+    subprocess.run(["rm", "-rf", REPO])   # remove partial clone if any
+    subprocess.run(["git", "clone", GIT_URL], cwd="/content", check=True)
     print("Repo cloned")
 else:
+    # Already cloned — pull latest
     subprocess.run(["git", "pull"], cwd=REPO, check=True)
     print("Repo updated")
 
+# ── Set working directory ────────────────────────────────────
 os.chdir(REPO)
-sys.path.insert(0, ".")
+if "." not in sys.path:
+    sys.path.insert(0, ".")
+
 os.makedirs("/content/demo/assets", exist_ok=True)
 os.makedirs("/content/data",        exist_ok=True)
 os.makedirs("/content/checkpoints", exist_ok=True)
@@ -57,7 +68,7 @@ os.makedirs("/content/logs",        exist_ok=True)
 import importlib.metadata
 print(f"OpenEnv : {importlib.metadata.version('openenv')}")
 print(f"CWD     : {os.getcwd()}")
-print("CELL 1 done")
+print("\nCELL 1 done ✓")
 
 
 # ============================================================
@@ -72,19 +83,25 @@ OPENAI_API_KEY = userdata.get("OPENAI_API_KEY")
 if not HF_TOKEN:
     raise RuntimeError(
         "HF_TOKEN missing.\n"
-        "Key icon → Add secret → Name: HF_TOKEN, Value: hf_xxxx, enable notebook access."
+        "Key icon (left sidebar) → Add secret\n"
+        "  Name: HF_TOKEN\n"
+        "  Value: hf_xxxx  (write token from hf.co/settings/tokens)\n"
+        "  Toggle Notebook access ON"
     )
 if not OPENAI_API_KEY:
     raise RuntimeError(
         "OPENAI_API_KEY missing.\n"
-        "Key icon → Add secret → Name: OPENAI_API_KEY, Value: sk-xxxx, enable notebook access."
+        "Key icon (left sidebar) → Add secret\n"
+        "  Name: OPENAI_API_KEY\n"
+        "  Value: sk-xxxx\n"
+        "  Toggle Notebook access ON"
     )
 
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
 print(f"HF_TOKEN       : {HF_TOKEN[:8]}...{HF_TOKEN[-4:]}")
 print(f"OPENAI_API_KEY : {OPENAI_API_KEY[:8]}...{OPENAI_API_KEY[-4:]}")
-print("CELL 2 done")
+print("\nCELL 2 done ✓")
 
 
 # ============================================================
@@ -94,9 +111,8 @@ import os as _os
 import numpy as np
 from env.spindleflow_env import SpindleFlowEnv
 
-# simulate_specialists=True → per-step specialist calls use local simulation
-# (fast, no API cost per step). OPENAI_API_KEY still used for task generation
-# and the finetuner that fires every 100 episodes.
+# Adds simulate_specialists kwarg so per-step calls stay local/fast.
+# OPENAI_API_KEY is still active for task generation + finetuner.
 if not getattr(SpindleFlowEnv, "_simulate_patched", False):
     _orig_init = SpindleFlowEnv.__init__
 
@@ -112,7 +128,8 @@ if not getattr(SpindleFlowEnv, "_simulate_patched", False):
         if getattr(self, "simulate_specialists", False):
             _key = _os.environ.pop("OPENAI_API_KEY", None)
             try:
-                return _orig_call(self, specialist_id, task, elapsed_ms, context=context)
+                return _orig_call(self, specialist_id, task,
+                                  elapsed_ms, context=context)
             finally:
                 if _key:
                     _os.environ["OPENAI_API_KEY"] = _key
@@ -137,7 +154,7 @@ _, reward, _, _, info2 = env.step(env.action_space.sample())
 print(f"reward    : {reward:.4f}")
 print(f"action    : {info2['action_name']}")
 env.close()
-print("CELL 3 done — environment OK")
+print("\nCELL 3 done ✓ — environment OK")
 
 
 # ============================================================
@@ -153,23 +170,23 @@ if torch.cuda.is_available():
 
 for _name in ("PPOConfig", "GRPOConfig", "SFTConfig"):
     if getattr(trl, _name, None):
-        print(f"TRL config class: {_name}")
+        print(f"TRL config: {_name}")
         break
 else:
     print("TRL imported (TrainingArguments-based version)")
 
-print("CELL 4 done — TRL requirement satisfied")
+print("\nCELL 4 done ✓ — TRL requirement satisfied")
 
 
 # ============================================================
 # CELL 5 — Train RecurrentPPO (LSTM PPO)
 #
-# Per-step calls  : local simulation  (~0.001 s/step, no API cost)
-# Task generation : GPT-4o-mini via OPENAI_API_KEY  (diverse tasks)
-# Finetuner       : fires every 100 episodes via OPENAI_API_KEY
-# Reward baseline : GPT-4o-mini via OPENAI_API_KEY  (quality signal)
+# Per-step specialist calls : local simulation (no API cost/latency)
+# Task generation           : GPT-4o-mini via OPENAI_API_KEY
+# Finetuner                 : fires every 100 episodes
+# Reward baseline           : GPT-4o-mini via OPENAI_API_KEY
 #
-# Expected: ~20-25 min on T4 GPU for 100k steps / ~10k episodes
+# Expected runtime: ~20–25 min on T4 for 100k steps (~10k episodes)
 # ============================================================
 import time, yaml, torch, numpy as np
 from sb3_contrib import RecurrentPPO
@@ -254,9 +271,9 @@ model = RecurrentPPO(
     device="cuda" if torch.cuda.is_available() else "cpu",
 )
 
-_tlog(f"Device         : {model.device}")
-_tlog(f"Timesteps      : {TOTAL_TIMESTEPS:,}")
-_tlog(f"Curriculum     : Phase {curriculum.current_phase} — {curriculum.progress_str()}")
+_tlog(f"Device     : {model.device}")
+_tlog(f"Timesteps  : {TOTAL_TIMESTEPS:,}")
+_tlog(f"Curriculum : Phase {curriculum.current_phase} — {curriculum.progress_str()}")
 _tlog("Training started...")
 
 reward_logger  = RewardLogger(curriculum)
@@ -279,9 +296,9 @@ model.save("/content/spindleflow_model")
 vec_env.save("/content/vec_normalize.pkl")
 
 _tlog(f"Done in {_elapsed/60:.1f} min")
-_tlog(f"Episodes : {len(reward_logger.episode_rewards)}")
+_tlog(f"Episodes        : {len(reward_logger.episode_rewards)}")
 _tlog(f"Curriculum final: {curriculum.progress_str()}")
-print("CELL 5 done — model saved")
+print("\nCELL 5 done ✓ — model saved")
 
 
 # ============================================================
@@ -293,11 +310,11 @@ import matplotlib.pyplot as plt
 
 ep_rewards = reward_logger.episode_rewards
 if not ep_rewards:
-    raise RuntimeError("No episodes completed — recheck Cell 5")
+    raise RuntimeError("No episodes recorded — check Cell 5 output for errors")
 
 n_ep     = len(ep_rewards)
 episodes = list(range(n_ep))
-window   = max(30, n_ep // 20)
+window   = max(30, n_ep // 20)   # adaptive: ~5% of run
 
 smoothed = [
     float(np.mean(ep_rewards[max(0, i - window):i + 1]))
@@ -338,8 +355,8 @@ ax.set_title(
     color="#f0f6fc", fontsize=13, fontweight="bold", pad=14,
 )
 ax.tick_params(colors="#8b949e")
-for s in ax.spines.values():
-    s.set_edgecolor("#30363d")
+for sp in ax.spines.values():
+    sp.set_edgecolor("#30363d")
 ax.grid(color="#21262d", linewidth=0.8, alpha=0.9)
 ax.legend(fontsize=10, framealpha=0.85,
           facecolor="#161b22", edgecolor="#30363d", labelcolor="#c9d1d9")
@@ -354,11 +371,11 @@ fig.savefig("/content/reward_curve.png", dpi=180, bbox_inches="tight",
             facecolor=fig.get_facecolor())
 plt.show()
 
-_tlog(f"Curve: early={early_mean:+.4f} final={final_mean:+.4f} "
+_tlog(f"Curve: early={early_mean:+.4f}  final={final_mean:+.4f}  "
       f"improvement={improvement:+.4f}")
-print(f"\nEpisodes   : {n_ep:,}")
+print(f"Episodes   : {n_ep:,}")
 print(f"Improvement: {improvement:+.4f}")
-print("CELL 6 done — reward curve saved")
+print("\nCELL 6 done ✓ — reward curve saved")
 
 
 # ============================================================
@@ -367,11 +384,11 @@ print("CELL 6 done — reward curve saved")
 import json
 from pathlib import Path
 
-print("="*52)
+print("=" * 52)
 print("LEARNING FEATURES AUDIT")
-print("="*52)
+print("=" * 52)
 
-print(f"\nFeature 5 — Curriculum")
+print(f"\nFeature 5 — Curriculum (performance-gated)")
 print(f"  Phase        : {curriculum.current_phase}/3")
 print(f"  Rolling mean : {curriculum.rolling_mean():.3f}")
 print(f"  {curriculum.progress_str()}")
@@ -382,12 +399,12 @@ print(f"\nFeature 2 — Specialist memory ({mem_path})")
 if mem_path.exists():
     data = json.loads(mem_path.read_text())
     total = sum(len(v) for v in data.values())
-    print(f"  {len(data)} specialists, {total} total entries")
+    print(f"  {len(data)} specialists · {total} total entries")
     for sid, entries in list(data.items())[:3]:
         avg = sum(e["reward"] for e in entries) / len(entries)
         print(f"    {sid}: {len(entries)} entries, avg={avg:.3f}")
 else:
-    print("  No file yet (finetuner fires after 100 episodes)")
+    print("  No file yet (finetuner fires after 100 completed episodes)")
 
 spawn_path = Path(_cfg.get("environment", {}).get(
     "spawn_memory_path", "data/spawn_memory.jsonl"))
@@ -395,6 +412,9 @@ print(f"\nFeature 3 — Spawn memory ({spawn_path})")
 if spawn_path.exists():
     lines = [l for l in spawn_path.read_text().splitlines() if l.strip()]
     print(f"  {len(lines)} spawn records")
+    for line in lines[:2]:
+        rec = json.loads(line)
+        print(f"    {rec['specialist_role']} | reward={rec['episode_reward']:.3f}")
 else:
     print("  No file yet")
 
@@ -407,8 +427,8 @@ if res_path.exists():
 else:
     print("  No file yet")
 
-print("\n" + "="*52)
-print("CELL 7 done")
+print("\n" + "=" * 52)
+print("CELL 7 done ✓")
 
 
 # ============================================================
@@ -467,12 +487,12 @@ with open(readme_path, "w") as f:
     f.write(readme)
 
 candidates = [
-    ("/content/spindleflow_model.zip",           "spindleflow_model.zip"),
-    ("/content/vec_normalize.pkl",               "vec_normalize.pkl"),
-    ("/content/reward_curve.png",                "reward_curve.png"),
-    ("/content/demo/assets/reward_curve.json",   "reward_curve.json"),
-    ("/content/logs/training_log.txt",           "training_log.txt"),
-    (readme_path,                                "README.md"),
+    ("/content/spindleflow_model.zip",          "spindleflow_model.zip"),
+    ("/content/vec_normalize.pkl",              "vec_normalize.pkl"),
+    ("/content/reward_curve.png",               "reward_curve.png"),
+    ("/content/demo/assets/reward_curve.json",  "reward_curve.json"),
+    ("/content/logs/training_log.txt",          "training_log.txt"),
+    (readme_path,                               "README.md"),
 ]
 
 ops = [
@@ -490,7 +510,6 @@ _tlog(f"Uploaded {len(ops)} files:")
 for src, dst in candidates:
     if os.path.exists(src):
         _tlog(f"  {dst}")
-
 _tlog(f"Model live : https://huggingface.co/{HF_REPO}")
 _tlog(f"Log        : https://huggingface.co/{HF_REPO}/blob/main/training_log.txt")
-print("CELL 8 done — all done!")
+print("\nCELL 8 done ✓ — all done!")
