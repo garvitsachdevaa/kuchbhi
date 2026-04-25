@@ -63,8 +63,10 @@ def _training_thread():
 
         if not HF_REPO:
             from huggingface_hub import whoami
-            username = whoami(token=HF_TOKEN)["name"]
+            username = whoami(token=HF_TOKEN)["name"].strip()
             HF_REPO = f"{username}/spindleflow-rl"
+        else:
+            HF_REPO = HF_REPO.strip()
         _log(f"Model will be pushed to: https://huggingface.co/{HF_REPO}")
 
         REPO_DIR = "/home/user/app"
@@ -78,9 +80,12 @@ def _training_thread():
 
         # ── Create HF repo early so periodic pushes can start ──
         from huggingface_hub import HfApi, CommitOperationAdd
-        api = HfApi()
-        api.create_repo(repo_id=HF_REPO, repo_type="model",
-                        exist_ok=True, token=HF_TOKEN)
+        api = HfApi(token=HF_TOKEN)
+        # Pass only the repo name (no namespace) — newer huggingface_hub
+        # rejects "user/repo" as the repo_id in create_repo.
+        _repo_name = HF_REPO.split("/")[-1]
+        api.create_repo(repo_id=_repo_name, repo_type="model",
+                        exist_ok=True)
 
         # ── Patch env for simulate_specialists ──────────────
         _log("Loading environment...")
