@@ -430,7 +430,7 @@ CSS = """
 footer { display: none !important; }
 """
 
-with gr.Blocks(title="SpindleFlow RL Training", css=CSS) as demo:
+with gr.Blocks(title="SpindleFlow RL Training", theme=gr.themes.Soft(), css=CSS) as demo:
     with gr.Column(elem_classes="title-md"):
         gr.Markdown("# 🤖 SpindleFlow RL — Training Dashboard")
     with gr.Column(elem_classes="subtitle-md"):
@@ -462,4 +462,4 @@ with gr.Blocks(title="SpindleFlow RL Training", css=CSS) as demo:
     refresh_btn.click(fn=_get_state, outputs=[status_box, log_box])
     demo.load(fn=_get_state, outputs=[status_box, log_box])
 
-demo.launch(theme=gr.themes.Soft())
+demo.launch()
