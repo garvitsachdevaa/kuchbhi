@@ -14,9 +14,14 @@ Training starts automatically when the Space boots.
 Refresh the page or click "Refresh" to see live progress.
 """
 
+import sys, os
+print("=== PYTHON STARTED ===", flush=True)
+
 import gradio as gr
+print("=== GRADIO IMPORTED ===", flush=True)
+
 import threading
-import os, sys, json, time
+import json, time
 import numpy as np
 
 # ── Shared state ─────────────────────────────────────────────
