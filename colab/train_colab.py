@@ -1,29 +1,22 @@
 # ============================================================
 # SpindleFlow RL — Google Colab Training Script
 # Runtime: Runtime > Change runtime type > T4 GPU (free tier)
-# Run each cell in order top-to-bottom.
+#
+# SECRETS (Runtime > Manage secrets — key icon in sidebar):
+#   HF_TOKEN       REQUIRED  — HuggingFace write token
+#                              hf.co/settings/tokens → New token (write)
+#   OPENAI_API_KEY OPTIONAL  — enables finetuner + spawn self-learning
+#                              without it the run uses fast simulation mode
+#
+# Run CELL 2 through CELL 8 in order. Do NOT re-run CELL 2 after restart.
 # ============================================================
 
-# ============================================================
-# CELL 1 — Install dependencies + clone repo
-# ============================================================
-# Paste this into a Colab cell and run it. Then use Runtime > Restart
-# session once, and continue from CELL 2 onwards without re-running this.
-#
-# !pip install openenv stable-baselines3 sb3-contrib gymnasium \
-#              sentence-transformers openai pyyaml trl transformers \
-#              datasets torch --quiet
-#
-# !git clone https://github.com/garvitsachdevaa/kuchbhi.git
-# %cd kuchbhi/spindleflow-rl
-# import sys; sys.path.insert(0, ".")
 
 # ============================================================
-# CELL 2 — Install deps, clone repo (if needed), set working dir
+# CELL 2 — Install deps, clone repo, set working dir
 # ============================================================
 import sys, os, subprocess
 
-# ── Install packages (safe to re-run — pip is idempotent) ────
 subprocess.run([
     "pip", "install", "-q",
     "openenv", "stable-baselines3", "sb3-contrib", "gymnasium",
@@ -33,7 +26,6 @@ subprocess.run([
 ], check=True)
 print("Packages OK")
 
-# ── Clone repo if not already present ────────────────────────
 REPO = "/content/kuchbhi/spindleflow-rl"
 if not os.path.isdir(REPO):
     subprocess.run(
@@ -44,7 +36,6 @@ if not os.path.isdir(REPO):
 else:
     print("Repo already present — skipping clone")
 
-# ── Set working directory ─────────────────────────────────────
 os.chdir(REPO)
 sys.path.insert(0, ".")
 print(f"Working directory: {os.getcwd()}")
@@ -54,22 +45,17 @@ print(f"OpenEnv version  : {importlib.metadata.version('openenv')}")
 os.makedirs("/content/demo/assets", exist_ok=True)
 os.makedirs("/content/data", exist_ok=True)
 os.makedirs("/content/checkpoints", exist_ok=True)
+os.makedirs("/content/logs", exist_ok=True)
 print("Setup complete")
 
+
 # ============================================================
-# CELL 3 — Patch env + environment smoke test
-#
-# The cloned repo may not have simulate_specialists yet.
-# The monkey-patch below adds it without touching any file.
-# simulate_specialists=True  → per-step calls use simulation (fast)
-#                               finetuner + spawn still use OpenAI key
+# CELL 3 — Patch env + smoke test
 # ============================================================
 from env.spindleflow_env import SpindleFlowEnv
 import numpy as np
 import os as _os
 
-# ── Monkey-patch: add simulate_specialists to SpindleFlowEnv ─
-# Guard prevents recursion if this cell is re-run in the same session.
 if not getattr(SpindleFlowEnv, "_simulate_patched", False):
     _orig_init = SpindleFlowEnv.__init__
 
@@ -97,7 +83,6 @@ if not getattr(SpindleFlowEnv, "_simulate_patched", False):
 else:
     print("Already patched — skipping")
 
-# ── Smoke test ────────────────────────────────────────────────
 env = SpindleFlowEnv(
     config_path="configs/training_config.yaml",
     catalog_path="configs/specialist_catalog.yaml",
@@ -118,9 +103,9 @@ print(f"Reward components : {info2['reward_components']}")
 print("Environment OK — end-to-end step works.")
 env.close()
 
+
 # ============================================================
-# CELL 4 — HuggingFace TRL (satisfies HF TRL requirement)
-# PPOConfig was removed in TRL >= 0.9 — version-safe import below
+# CELL 4 — HuggingFace TRL (hackathon requirement check)
 # ============================================================
 import trl, torch
 
@@ -141,23 +126,15 @@ else:
 
 print("HuggingFace TRL requirement satisfied. Primary training uses SB3 (Cell 5).")
 
+
 # ============================================================
-# CELL 5 — SB3 RecurrentPPO training with all learning features
+# CELL 5 — RecurrentPPO training (LSTM PPO)
 #
-# Learning features active in this run:
-#   Feature 1: SPAWN_SPECIALIST is a real policy action
-#   Feature 2: Specialist memory recorded; prompt finetuner fires every 100 ep
-#   Feature 3: Spawn memory written; future spawns use RAG context
-#   Feature 4: Conflict resolution bandit learns per-type strategy
-#   Feature 5: Curriculum advances on rolling mean reward, not fixed count
-#   Feature 6: _task_emb assertions guard observation shape
-#   Feature 7: Reward rubric loaded from configs/reward_rubric.yaml
-#
-# simulate_specialists=True keeps per-step calls fast (~0.001s each).
-# Episode-level self-learning (finetuner every 100 ep, spawn on demand)
-# still uses OPENAI_API_KEY when present.
-# Expected runtime on T4 GPU: ~20-30 min
+# simulate_specialists=True  — per-step calls are local (~0.001 s)
+# no OpenAI calls during steps → fast on T4
+# Expected runtime: ~20–25 min for 100k steps (~10k episodes)
 # ============================================================
+import time
 from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
@@ -166,18 +143,24 @@ from training.curriculum import CurriculumManager
 from training.specialist_improvement_callback import SpecialistImprovementCallback
 import yaml
 
+_LOG_FILE = "/content/logs/training_log.txt"
+
+def _tlog(msg: str):
+    ts = time.strftime("%H:%M:%S")
+    line = f"[{ts}] {msg}"
+    print(line, flush=True)
+    with open(_LOG_FILE, "a", encoding="utf-8") as _f:
+        _f.write(line + "\n")
+
 with open("configs/training_config.yaml") as f:
     _cfg = yaml.safe_load(f)
 
 curriculum = CurriculumManager(config_path="configs/training_config.yaml")
 
+TOTAL_TIMESTEPS = 100_000   # ~10k episodes on T4, ~20-25 min
+
 
 class RewardLogger(BaseCallback):
-    """
-    Tracks per-episode rewards, feeds them to the curriculum manager,
-    and prints curriculum progress every 25 episodes.
-    """
-
     def __init__(self, curriculum: CurriculumManager):
         super().__init__()
         self.episode_rewards: list[float] = []
@@ -185,18 +168,22 @@ class RewardLogger(BaseCallback):
         self._curriculum = curriculum
 
     def _on_step(self) -> bool:
-        rewards = self.locals.get("rewards", [])
-        dones   = self.locals.get("dones",   [])
-        for r, d in zip(rewards, dones):
+        for r, d in zip(
+            self.locals.get("rewards", []),
+            self.locals.get("dones",   []),
+        ):
             self._running += float(r)
             if d:
-                ep_reward = self._running
-                self.episode_rewards.append(ep_reward)
+                ep = self._running
+                self.episode_rewards.append(ep)
                 self._running = 0.0
-                advanced = self._curriculum.on_episode_end(ep_reward)
+                advanced = self._curriculum.on_episode_end(ep)
                 n = len(self.episode_rewards)
-                if advanced or n % 25 == 0:
-                    print(f"  Ep {n:4d} | reward {ep_reward:+.3f} | {self._curriculum.progress_str()}")
+                if advanced or n % 50 == 0:
+                    _tlog(
+                        f"Ep {n:5d} | reward {ep:+.3f} | "
+                        f"{self._curriculum.progress_str()}"
+                    )
         return True
 
 
@@ -206,7 +193,7 @@ def make_env():
         catalog_path="configs/specialist_catalog.yaml",
         use_real_spindleflow=False,
         phase=1,
-        simulate_specialists=True,   # fast steps; finetuner+spawn still use OpenAI
+        simulate_specialists=True,
     )
 
 
@@ -237,12 +224,13 @@ model = RecurrentPPO(
     device="cuda" if torch.cuda.is_available() else "cpu",
 )
 
-print(f"Training on     : {model.device}")
-print(f"Curriculum start: Phase {curriculum.current_phase} — {curriculum.progress_str()}")
-print("Starting 100,000-step training run...\n")
+_tlog(f"Device          : {model.device}")
+_tlog(f"Total timesteps : {TOTAL_TIMESTEPS:,}")
+_tlog(f"Curriculum start: Phase {curriculum.current_phase} — {curriculum.progress_str()}")
+_tlog("Training started...\n")
 
 reward_logger  = RewardLogger(curriculum=curriculum)
-checkpoint_cb  = CheckpointCallback(save_freq=5000, save_path="/content/checkpoints/")
+checkpoint_cb  = CheckpointCallback(save_freq=10_000, save_path="/content/checkpoints/")
 improvement_cb = SpecialistImprovementCallback(
     improve_every_n_episodes=_cfg.get("specialist_improvement", {}).get(
         "improve_every_n_episodes", 100
@@ -250,39 +238,49 @@ improvement_cb = SpecialistImprovementCallback(
     verbose=1,
 )
 
-_total_steps = int(_cfg.get("training", {}).get("total_timesteps", 500_000))
+_t0 = time.time()
 model.learn(
-    total_timesteps=_total_steps,
+    total_timesteps=TOTAL_TIMESTEPS,
     callback=[reward_logger, checkpoint_cb, improvement_cb],
 )
+_elapsed = time.time() - _t0
 
-model.save("/content/spindleflow_colab_demo")
+model.save("/content/spindleflow_colab_model")
 vec_env.save("/content/vec_normalize_colab.pkl")
-print(f"\nModel saved.  Episodes tracked: {len(reward_logger.episode_rewards)}")
-print(f"Final curriculum: {curriculum.progress_str()}")
+
+_tlog(f"\nTraining done in {_elapsed/60:.1f} min")
+_tlog(f"Episodes tracked : {len(reward_logger.episode_rewards)}")
+_tlog(f"Final curriculum : {curriculum.progress_str()}")
+
 
 # ============================================================
-# CELL 6 — Save reward curve (Training tab + HF blog post)
+# CELL 6 — Reward curve (publication-quality)
 # ============================================================
 import json
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
 ep_rewards = reward_logger.episode_rewards
 if not ep_rewards:
-    print("WARNING: No episodes completed — increase total_timesteps and rerun.")
+    print("WARNING: No episodes completed — increase TOTAL_TIMESTEPS and rerun.")
     ep_rewards = [0.0]
 
-episodes = list(range(len(ep_rewards)))
+n_ep      = len(ep_rewards)
+episodes  = list(range(n_ep))
+window    = max(30, n_ep // 20)   # adaptive smoothing: ~5% of total episodes
 
-# 20-episode rolling mean — wide enough to suppress per-episode noise
 smoothed = [
-    float(np.mean(ep_rewards[max(0, i - 19):i + 1]))
-    for i in range(len(ep_rewards))
+    float(np.mean(ep_rewards[max(0, i - window):i + 1]))
+    for i in range(n_ep)
 ]
 
-# ── Save JSON for Streamlit Training tab ──────────────────
-step = max(1, len(episodes) // 200)
+early_mean = float(np.mean(ep_rewards[:min(50, n_ep)]))
+final_mean = float(np.mean(ep_rewards[max(0, n_ep - 200):]))
+
+# ── Save JSON ──────────────────────────────────────────────
+step      = max(1, n_ep // 300)
 json_data = {
     "episodes":     episodes[::step],
     "mean_rewards": smoothed[::step],
@@ -290,46 +288,74 @@ json_data = {
 json_path = "/content/demo/assets/reward_curve.json"
 with open(json_path, "w") as f:
     json.dump(json_data, f)
-print(f"Saved reward_curve.json  ({len(json_data['episodes'])} data points)")
-print("ACTION REQUIRED: Download and place at  demo/assets/reward_curve.json")
 
-# ── Save PNG for HuggingFace blog post ────────────────────
-plt.figure(figsize=(8, 4))
-plt.plot(episodes, ep_rewards, "o", markersize=3, alpha=0.35,
-         color="#00d4ff", label="Episode reward")
-plt.plot(episodes, smoothed, linewidth=2.5, color="#00d4ff",
-         label="Smoothed (20-ep mean)")
-plt.axhline(y=float(np.mean(ep_rewards[:5])) if len(ep_rewards) >= 5 else 0.0,
-            color="#94a3b8", linestyle="--", alpha=0.6, label="Early baseline")
-plt.xlabel("Episode")
-plt.ylabel("Reward")
-plt.title("SpindleFlow RL — Delegation Policy Learning Curve")
-plt.legend()
-plt.grid(alpha=0.2)
-plt.tight_layout()
+# ── Plot ───────────────────────────────────────────────────
+fig, ax = plt.subplots(figsize=(11, 5), dpi=180)
+fig.patch.set_facecolor("#0d1117")
+ax.set_facecolor("#161b22")
+
+plot_every = max(1, n_ep // 800)
+ax.scatter(
+    episodes[::plot_every], ep_rewards[::plot_every],
+    s=4, alpha=0.25, color="#58a6ff", zorder=2, label="Episode reward",
+)
+ax.plot(
+    episodes[::plot_every], smoothed[::plot_every],
+    linewidth=2.5, color="#ff6b35", zorder=3,
+    label=f"Smoothed ({window}-ep mean)",
+)
+ax.axhline(
+    y=early_mean, color="#94a3b8", linestyle="--", linewidth=1.2, alpha=0.75,
+    label=f"Early baseline  {early_mean:+.3f}",
+)
+ax.axhline(
+    y=final_mean, color="#34d399", linestyle="--", linewidth=1.2, alpha=0.85,
+    label=f"Final mean  {final_mean:+.3f}",
+)
+
+ax.set_xlabel("Episode", color="#c9d1d9", fontsize=12)
+ax.set_ylabel("Reward", color="#c9d1d9", fontsize=12)
+ax.set_title(
+    "SpindleFlow RL — Delegation Policy Learning Curve\n"
+    f"RecurrentPPO · LSTM · {TOTAL_TIMESTEPS:,} steps · {n_ep:,} episodes",
+    color="#f0f6fc", fontsize=13, fontweight="bold", pad=14,
+)
+ax.tick_params(colors="#8b949e")
+for spine in ax.spines.values():
+    spine.set_edgecolor("#30363d")
+ax.grid(color="#21262d", linewidth=0.8, alpha=0.9)
+
+legend = ax.legend(
+    fontsize=10, framealpha=0.85,
+    facecolor="#161b22", edgecolor="#30363d", labelcolor="#c9d1d9",
+)
+
+# Annotate improvement
+improvement = final_mean - early_mean
+sign = "▲" if improvement >= 0 else "▼"
+ax.annotate(
+    f"  {sign} {abs(improvement):.3f} reward improvement",
+    xy=(n_ep * 0.65, (early_mean + final_mean) / 2),
+    color="#f0f6fc", fontsize=10, fontstyle="italic",
+)
+
+fig.tight_layout()
 png_path = "/content/reward_curve.png"
-plt.savefig(png_path, dpi=150)
+fig.savefig(png_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
 plt.show()
-print(f"Saved reward_curve.png")
+_tlog(f"Reward curve saved → {png_path}")
 
-# ── Summary ───────────────────────────────────────────────
-print(f"\n{'='*55}")
-print(f"Training summary")
-print(f"  Episodes completed : {len(ep_rewards)}")
-print(f"  First-5 mean reward: {np.mean(ep_rewards[:5]):.4f}")
-print(f"  Last-5  mean reward: {np.mean(ep_rewards[-5:]):.4f}")
-improvement = np.mean(ep_rewards[-5:]) - np.mean(ep_rewards[:5])
-print(f"  Improvement        : {improvement:+.4f}")
-print(f"{'='*55}")
-print("\nFILES TO DOWNLOAD FROM COLAB:")
-print("  /content/demo/assets/reward_curve.json  -> demo/assets/reward_curve.json")
-print("  /content/reward_curve.png               -> huggingface_blog/reward_curve.png")
-print("  /content/spindleflow_colab_demo.zip     -> checkpoints/ (optional)")
-print("  /content/vec_normalize_colab.pkl        -> checkpoints/ (optional)")
+_tlog(f"\n{'='*55}")
+_tlog(f"Training summary")
+_tlog(f"  Episodes completed : {n_ep}")
+_tlog(f"  Early baseline     : {early_mean:+.4f}")
+_tlog(f"  Final mean         : {final_mean:+.4f}")
+_tlog(f"  Improvement        : {improvement:+.4f}")
+_tlog(f"{'='*55}")
+
 
 # ============================================================
-# CELL 7 — Learning features post-training audit
-# Confirms each feature fired at least once during the run.
+# CELL 7 — Learning features audit
 # ============================================================
 import os, json
 from pathlib import Path
@@ -338,13 +364,11 @@ print("\n" + "="*55)
 print("LEARNING FEATURES AUDIT")
 print("="*55)
 
-# Feature 5 — Curriculum
 print(f"\nFeature 5 — Curriculum (performance-gated)")
 print(f"  Final phase        : {curriculum.current_phase}/3")
 print(f"  Rolling mean reward: {curriculum.rolling_mean():.3f}")
 print(f"  {curriculum.progress_str()}")
 
-# Feature 2 — Specialist memory
 mem_path = Path(_cfg.get("specialist_improvement", {}).get(
     "memory_path", "data/specialist_memory.json"
 ))
@@ -358,9 +382,8 @@ if mem_path.exists():
         avg = sum(e["reward"] for e in entries) / len(entries)
         print(f"    {sid}: {len(entries)} entries, avg_reward={avg:.3f}")
 else:
-    print("  No memory file yet (no OPENAI_API_KEY or no terminal episodes)")
+    print("  No memory file yet (OPENAI_API_KEY not set — simulation mode)")
 
-# Feature 3 — Spawn memory
 spawn_path = Path(_cfg.get("environment", {}).get(
     "spawn_memory_path", "data/spawn_memory.jsonl"
 ))
@@ -373,9 +396,8 @@ if spawn_path.exists():
         print(f"    {rec['specialist_role']} | reward={rec['episode_reward']:.3f} "
               f"| sim {rec['pre_spawn_sim']:.2f}→{rec['post_spawn_sim']:.2f}")
 else:
-    print("  No spawn memory yet (requires OPENAI_API_KEY + policy choosing SPAWN_SPECIALIST)")
+    print("  No spawn memory yet (requires OPENAI_API_KEY + SPAWN_SPECIALIST action)")
 
-# Feature 4 — Resolution bandit
 res_path = Path(_cfg.get("agents", {}).get(
     "resolution_memory_path", "data/resolution_memory.jsonl"
 ))
@@ -394,17 +416,14 @@ else:
     print("  No resolution memory yet (requires detected conflicts during training)")
 
 print("\n" + "="*55)
-print("All learning features verified. Ready for final checkpoint.")
+print("All learning features verified.")
 print("="*55)
 
+
 # ============================================================
-# CELL 8 — Push trained model + artifacts to HuggingFace Hub
+# CELL 8 — Push model + artifacts + logs to HuggingFace Hub
 #
-# Requires HF_TOKEN secret set in Colab:
-#   Runtime > Manage secrets  (key icon in left sidebar)
-#   Name: HF_TOKEN   Value: hf_xxxxx  (write token from hf.co/settings/tokens)
-#
-# Target repo: garvitsachdeva/spindleflow-rl
+# HF_TOKEN must be in Runtime > Manage secrets (key icon).
 # ============================================================
 import numpy as np
 from huggingface_hub import HfApi, CommitOperationAdd
@@ -412,19 +431,20 @@ from google.colab import userdata
 
 HF_TOKEN = userdata.get("HF_TOKEN")
 if not HF_TOKEN:
-    raise RuntimeError("HF_TOKEN not set. Go to Runtime > Manage secrets and add it.")
+    raise RuntimeError(
+        "HF_TOKEN not set. "
+        "Go to Runtime > Manage secrets, add Name=HF_TOKEN, Value=hf_xxxx, enable notebook access."
+    )
 
 HF_REPO = "garvitsachdeva/spindleflow-rl"
 api = HfApi(token=HF_TOKEN)
-_repo_name = HF_REPO.split("/")[-1]
 
-print(f"Pushing to https://huggingface.co/{HF_REPO} ...")
-api.create_repo(repo_id=_repo_name, repo_type="model", exist_ok=True)
+_tlog(f"Pushing to https://huggingface.co/{HF_REPO} ...")
+api.create_repo(repo_id=HF_REPO.split("/")[-1], repo_type="model", exist_ok=True)
 
 ep   = reward_logger.episode_rewards
-f5   = float(np.mean(ep[:5]))  if len(ep) >= 5 else 0.0
+f5   = float(np.mean(ep[:5]))   if len(ep) >= 5 else 0.0
 l5   = float(np.mean(ep[-5:])) if len(ep) >= 5 else 0.0
-total_steps_run = int(_cfg.get("training", {}).get("total_timesteps", 500_000))
 
 readme_text = f"""---
 license: mit
@@ -440,17 +460,20 @@ library_name: stable-baselines3
 
 # SpindleFlow RL — Delegation Policy
 
-LSTM PPO agent trained on SpindleFlow-v0 (OpenEnv).
+LSTM PPO (RecurrentPPO) agent trained on SpindleFlow-v0 (OpenEnv).
+Trained on Google Colab T4 GPU.
 
 ## Training summary
 | Metric | Value |
 |---|---|
 | Algorithm | RecurrentPPO (SB3 + sb3-contrib) |
-| Total timesteps | {total_steps_run:,} |
-| Episodes completed | {len(ep)} |
-| First-5 mean reward | {f5:.4f} |
-| Last-5 mean reward | {l5:.4f} |
-| Improvement | {l5 - f5:+.4f} |
+| Total timesteps | {TOTAL_TIMESTEPS:,} |
+| Episodes completed | {len(ep):,} |
+| Early baseline (first 50) | {early_mean:.4f} |
+| Final mean (last 200) | {final_mean:.4f} |
+| Improvement | {final_mean - early_mean:+.4f} |
+| Training time | {_elapsed/60:.1f} min |
+| Device | T4 GPU |
 
 ![Reward Curve](reward_curve.png)
 
@@ -467,10 +490,11 @@ with open(readme_path, "w") as f:
     f.write(readme_text)
 
 candidates = [
-    ("/content/spindleflow_colab_demo.zip",     "spindleflow_model.zip"),
+    ("/content/spindleflow_colab_model.zip",    "spindleflow_model.zip"),
     ("/content/vec_normalize_colab.pkl",         "vec_normalize.pkl"),
     ("/content/reward_curve.png",                "reward_curve.png"),
     ("/content/demo/assets/reward_curve.json",   "reward_curve.json"),
+    ("/content/logs/training_log.txt",           "training_log.txt"),
     (readme_path,                                "README.md"),
 ]
 
@@ -488,8 +512,13 @@ api.create_commit(
     token=HF_TOKEN,
 )
 
-print(f"Uploaded {len(ops)} files.")
-print(f"Model live at: https://huggingface.co/{HF_REPO}")
-print(f"First-5 mean reward : {f5:.4f}")
-print(f"Last-5  mean reward : {l5:.4f}")
-print(f"Improvement         : {l5 - f5:+.4f}")
+_tlog(f"Uploaded {len(ops)} files:")
+for src, dst in candidates:
+    if os.path.exists(src):
+        _tlog(f"  ✓ {dst}")
+_tlog(f"Model live at  : https://huggingface.co/{HF_REPO}")
+_tlog(f"Training log   : https://huggingface.co/{HF_REPO}/blob/main/training_log.txt")
+_tlog(f"Reward curve   : https://huggingface.co/{HF_REPO}/blob/main/reward_curve.png")
+_tlog(f"Reward (early) : {early_mean:+.4f}")
+_tlog(f"Reward (final) : {final_mean:+.4f}")
+_tlog(f"Improvement    : {final_mean - early_mean:+.4f}")
