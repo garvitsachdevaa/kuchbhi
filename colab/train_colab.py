@@ -18,90 +18,74 @@
 # ============================================================
 import subprocess, os, sys
 
-print(f"Python {sys.version}\n")
+print(f"Python {sys.version}")
 
-# ── Install packages ─────────────────────────────────────────
-# audioop-lts is only for Python 3.13+ (Colab uses 3.12)
 packages = [
     "openenv", "stable-baselines3", "sb3-contrib", "gymnasium",
     "sentence-transformers", "openai", "pyyaml", "trl",
-    "transformers", "datasets", "torch", "matplotlib", "huggingface_hub",
+    "transformers", "datasets", "torch", "matplotlib",
+    "huggingface_hub", "python-dotenv",
 ]
 if sys.version_info >= (3, 13):
     packages.append("audioop-lts")
 
-print("Installing packages...")
-result = subprocess.run(["pip", "install"] + packages,
-                        capture_output=True, text=True)
+result = subprocess.run(
+    ["pip", "install", "-q"] + packages,
+    capture_output=True, text=True
+)
 if result.returncode != 0:
-    print(result.stdout[-3000:])
     print(result.stderr[-3000:])
-    raise RuntimeError("pip install failed — see output above")
-print("Packages OK\n")
+    raise RuntimeError("pip install failed")
+print("Packages OK")
 
-# ── Clone or update repo ─────────────────────────────────────
-# The GitHub repo IS the spindleflow-rl project root.
-# It clones to /content/kuchbhi/ — that IS the working directory.
 REPO = "/content/kuchbhi"
 GIT_URL = "https://github.com/garvitsachdevaa/kuchbhi.git"
 
 if not os.path.isdir(os.path.join(REPO, ".git")):
-    # Not cloned yet — do a fresh clone
-    subprocess.run(["rm", "-rf", REPO])   # remove partial clone if any
-    subprocess.run(["git", "clone", GIT_URL], cwd="/content", check=True)
+    subprocess.run(["git", "clone", "--depth=1", GIT_URL], cwd="/content", check=True)
     print("Repo cloned")
 else:
-    # Already cloned — pull latest
     subprocess.run(["git", "pull"], cwd=REPO, check=True)
     print("Repo updated")
 
-# ── Set working directory ────────────────────────────────────
 os.chdir(REPO)
-if "." not in sys.path:
-    sys.path.insert(0, ".")
+sys.path.insert(0, REPO)
 
-os.makedirs("/content/demo/assets", exist_ok=True)
-os.makedirs("/content/data",        exist_ok=True)
-os.makedirs("/content/checkpoints", exist_ok=True)
-os.makedirs("/content/logs",        exist_ok=True)
+for d in ["/content/demo/assets", "/content/data",
+          "/content/checkpoints", "/content/logs"]:
+    os.makedirs(d, exist_ok=True)
 
-import importlib.metadata
-print(f"OpenEnv : {importlib.metadata.version('openenv')}")
-print(f"CWD     : {os.getcwd()}")
-print("\nCELL 1 done ✓")
+print(f"CWD: {os.getcwd()}")
+print("CELL 1 done ✓")
 
 
 # ============================================================
-# CELL 2 — Load secrets
+# CELL 2 — Load secrets (with clear error messages)
 # ============================================================
 import os
-from google.colab import userdata
-
-HF_TOKEN       = userdata.get("HF_TOKEN")
-OPENAI_API_KEY = userdata.get("OPENAI_API_KEY")
+try:
+    from google.colab import userdata
+    HF_TOKEN       = userdata.get("HF_TOKEN")
+    OPENAI_API_KEY = userdata.get("OPENAI_API_KEY")
+except Exception:
+    HF_TOKEN       = ""
+    OPENAI_API_KEY = ""
 
 if not HF_TOKEN:
     raise RuntimeError(
-        "HF_TOKEN missing.\n"
-        "Key icon (left sidebar) → Add secret\n"
-        "  Name: HF_TOKEN\n"
-        "  Value: hf_xxxx  (write token from hf.co/settings/tokens)\n"
-        "  Toggle Notebook access ON"
+        "HF_TOKEN not found.\n"
+        "Click the 🔑 icon → Add secret → Name: HF_TOKEN → toggle Notebook access ON\n"
+        "Then Runtime → Restart and run all."
     )
 if not OPENAI_API_KEY:
-    raise RuntimeError(
-        "OPENAI_API_KEY missing.\n"
-        "Key icon (left sidebar) → Add secret\n"
-        "  Name: OPENAI_API_KEY\n"
-        "  Value: sk-xxxx\n"
-        "  Toggle Notebook access ON"
-    )
+    print("⚠️  No OPENAI_API_KEY — simulation mode (no LLM calls, faster training)")
 
+os.environ["HF_TOKEN"]       = HF_TOKEN
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
 print(f"HF_TOKEN       : {HF_TOKEN[:8]}...{HF_TOKEN[-4:]}")
-print(f"OPENAI_API_KEY : {OPENAI_API_KEY[:8]}...{OPENAI_API_KEY[-4:]}")
-print("\nCELL 2 done ✓")
+print(f"OPENAI_API_KEY : {'set' if OPENAI_API_KEY else 'NOT SET — simulation mode'}")
+print("CELL 2 done ✓")
 
 
 # ============================================================
