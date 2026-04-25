@@ -460,7 +460,7 @@ footer { display: none !important; }
 with gr.Blocks(title="SpindleFlow RL Training", css=CSS) as demo:
     gr.Markdown("# 🤖 SpindleFlow RL — Training Dashboard")
     gr.Markdown(
-        "Auto-refreshes every 10 s. "
+        "Live training log — updates every 10 s automatically. "
         "When complete the trained model is pushed to your HF Hub repo."
     )
 
@@ -483,9 +483,7 @@ with gr.Blocks(title="SpindleFlow RL Training", css=CSS) as demo:
         elem_classes="log-box",
     )
 
-    timer = gr.Timer(value=10)
-    timer.tick(fn=_get_state, outputs=[status_box, log_box])
     refresh_btn.click(fn=_get_state, outputs=[status_box, log_box])
-    demo.load(fn=_get_state, outputs=[status_box, log_box])
+    demo.load(fn=_get_state, outputs=[status_box, log_box], every=10)
 
 demo.launch()
