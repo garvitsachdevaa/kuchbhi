@@ -422,28 +422,44 @@ def _get_state():
     return label, "\n".join(_logs[-120:])
 
 
-with gr.Blocks(title="SpindleFlow RL Training", theme=gr.themes.Soft()) as demo:
-    gr.Markdown("# SpindleFlow RL — Training Dashboard")
-    gr.Markdown(
-        "Training runs automatically on startup. "
-        "Click **Refresh** every 30 s to see progress. "
-        "When complete the model is pushed to your HF Hub repo."
-    )
+CSS = """
+.status-box textarea { font-size: 1.1rem !important; font-weight: 600 !important; }
+.log-box textarea    { font-family: monospace !important; font-size: 0.82rem !important; }
+.title-md h1         { font-size: 2rem !important; margin-bottom: 0.2rem !important; }
+.subtitle-md p       { color: #64748b !important; margin-top: 0 !important; }
+footer { display: none !important; }
+"""
 
-    with gr.Row():
-        status_box = gr.Textbox(label="Status", value="⏳  Starting...",
-                                interactive=False, scale=3)
-        refresh_btn = gr.Button("🔄  Refresh", scale=1, variant="primary")
+with gr.Blocks(title="SpindleFlow RL Training", css=CSS) as demo:
+    with gr.Column(elem_classes="title-md"):
+        gr.Markdown("# 🤖 SpindleFlow RL — Training Dashboard")
+    with gr.Column(elem_classes="subtitle-md"):
+        gr.Markdown(
+            "Training runs automatically on startup. "
+            "Click **Refresh** every 30 s to see live progress. "
+            "When complete the model is pushed to your HF Hub repo."
+        )
+
+    with gr.Row(equal_height=True):
+        status_box = gr.Textbox(
+            label="Status",
+            value="⏳  Starting...",
+            interactive=False,
+            scale=4,
+            elem_classes="status-box",
+        )
+        refresh_btn = gr.Button("🔄  Refresh", scale=1, variant="primary", size="lg")
 
     log_box = gr.Textbox(
         label="Training log (last 120 lines)",
         value="",
-        lines=30,
+        lines=28,
         max_lines=40,
         interactive=False,
+        elem_classes="log-box",
     )
 
     refresh_btn.click(fn=_get_state, outputs=[status_box, log_box])
     demo.load(fn=_get_state, outputs=[status_box, log_box])
 
-demo.launch()
+demo.launch(theme=gr.themes.Soft())
