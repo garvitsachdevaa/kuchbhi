@@ -14,8 +14,26 @@ Training starts automatically when the Space boots.
 Refresh the page or click "Refresh" to see live progress.
 """
 
-import sys, os
+import sys, os, subprocess
 print("=== PYTHON STARTED ===", flush=True)
+
+# ── Force CUDA torch before any `import torch` happens in this process ─────────
+# requirements.txt installs CPU torch as a transitive dep of sentence-transformers.
+# --force-reinstall overrides "already satisfied"; --no-deps only touches torch.
+# This subprocess runs before gradio (and therefore before any torch import).
+print("Installing CUDA torch (force)...", flush=True)
+_cuda_r = subprocess.run(
+    [sys.executable, "-m", "pip", "install", "-q",
+     "--force-reinstall", "--no-deps",
+     "--index-url", "https://download.pytorch.org/whl/cu121",
+     "torch"],
+    capture_output=True, text=True,
+    timeout=300,
+)
+if _cuda_r.returncode == 0:
+    print("CUDA torch installed OK.", flush=True)
+else:
+    print("CUDA torch install FAILED:", _cuda_r.stderr[-400:], flush=True)
 
 import gradio as gr
 print("=== GRADIO IMPORTED ===", flush=True)
@@ -589,6 +607,7 @@ with gr.Blocks(title="SpindleFlow RL Training", css=CSS) as demo:
     )
 
     refresh_btn.click(fn=_get_state, outputs=[status_box, log_box])
+    demo.load(fn=_get_state, outputs=[status_box, log_box])
     timer = gr.Timer(value=10)
     timer.tick(fn=_get_state, outputs=[status_box, log_box])
 
