@@ -421,11 +421,12 @@ print("CELL 7 done ✓")
 import os, numpy as np
 from huggingface_hub import HfApi, CommitOperationAdd
 
-HF_REPO = "garvitsachdeva/spindleflow-rl"
+from huggingface_hub import whoami
+HF_REPO = f"{whoami(token=HF_TOKEN)['name']}/spindleflow-rl"
 api = HfApi(token=HF_TOKEN)
 
 _tlog(f"Pushing to https://huggingface.co/{HF_REPO} ...")
-api.create_repo(repo_id=HF_REPO.split("/")[-1], repo_type="model", exist_ok=True)
+api.create_repo(repo_id=HF_REPO, repo_type="model", exist_ok=True)
 
 ep = reward_logger.episode_rewards
 readme = f"""---

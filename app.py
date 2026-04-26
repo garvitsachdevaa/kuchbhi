@@ -89,11 +89,7 @@ def _training_thread():
         # ── Create HF repo early so periodic pushes can start ──
         from huggingface_hub import HfApi, CommitOperationAdd
         api = HfApi(token=HF_TOKEN)
-        # Pass only the repo name (no namespace) — newer huggingface_hub
-        # rejects "user/repo" as the repo_id in create_repo.
-        _repo_name = HF_REPO.split("/")[-1]
-        api.create_repo(repo_id=_repo_name, repo_type="model",
-                        exist_ok=True)
+        api.create_repo(repo_id=HF_REPO, repo_type="model", exist_ok=True)
 
         # ── Patch env for simulate_specialists ──────────────
         _log("Loading environment...")
@@ -229,7 +225,8 @@ def _training_thread():
                 simulate_specialists=True,
             )
 
-        vec_env = DummyVecEnv([make_env])
+        _n_envs = int(cfg.get("training", {}).get("n_envs", 1))
+        vec_env = DummyVecEnv([make_env] * _n_envs)
         vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0)
 
         _ppo  = cfg.get("ppo",  {})
@@ -484,6 +481,7 @@ with gr.Blocks(title="SpindleFlow RL Training", css=CSS) as demo:
     )
 
     refresh_btn.click(fn=_get_state, outputs=[status_box, log_box])
-    demo.load(fn=_get_state, outputs=[status_box, log_box], every=10)
+    timer = gr.Timer(value=10)
+    timer.tick(fn=_get_state, outputs=[status_box, log_box])
 
 demo.launch()

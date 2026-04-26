@@ -13,4 +13,6 @@ datasets>=2.19.0
 huggingface_hub>=0.33.5
 gradio>=5.50.0
 matplotlib>=3.8.0
-audioop-lts>=0.2.1
+audioop-lts>=0.2.1; python_version>="3.13"
+click>=8.0.0
+python-dotenv>=1.0.0
