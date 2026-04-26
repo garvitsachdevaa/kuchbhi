@@ -231,17 +231,58 @@ def _training_thread():
                 return True
 
         class PeriodicHubPush(BaseCallback):
-            """Pushes a checkpoint + log file to HF Hub every N steps.
-            Ensures no work is lost if the Space is interrupted."""
+            """Pushes checkpoint + log + reward curve to HF Hub every N steps."""
 
-            def __init__(self, api, hf_repo, hf_token, vec_env, push_every=50_000):
+            def __init__(self, api, hf_repo, hf_token, vec_env,
+                         reward_logger_ref, push_every=10_000):
                 super().__init__()
-                self._api        = api
-                self._repo       = hf_repo
-                self._token      = hf_token
-                self._vec_env    = vec_env
-                self._push_every = push_every
-                self._last_push  = 0
+                self._api           = api
+                self._repo          = hf_repo
+                self._token         = hf_token
+                self._vec_env       = vec_env
+                self._rl_ref        = reward_logger_ref
+                self._push_every    = push_every
+                self._last_push     = 0
+
+            def _save_curve(self):
+                ep = self._rl_ref.episode_rewards
+                if len(ep) < 2:
+                    return
+                window  = max(10, len(ep) // 20)
+                smoothed = [
+                    float(np.mean(ep[max(0, i - window):i + 1]))
+                    for i in range(len(ep))
+                ]
+                step = max(1, len(ep) // 200)
+                with open("/home/user/app/assets/reward_curve.json", "w") as f:
+                    json.dump({
+                        "episodes":     list(range(len(ep)))[::step],
+                        "mean_rewards": smoothed[::step],
+                        "raw_rewards":  ep[::step],
+                        "step":         self.num_timesteps,
+                    }, f)
+                import matplotlib, matplotlib.pyplot as plt
+                matplotlib.use("Agg")
+                plt.figure(figsize=(10, 4))
+                every = max(1, len(ep) // 500)
+                plt.plot(range(0, len(ep), every), ep[::every],
+                         "o", markersize=2, alpha=0.2, color="#00d4ff",
+                         label="Episode reward")
+                plt.plot(range(0, len(ep), every), smoothed[::every],
+                         linewidth=2.5, color="#ff6b35",
+                         label=f"Smoothed ({window}-ep mean)")
+                if len(ep) >= 5:
+                    plt.axhline(float(np.mean(ep[:5])),
+                                color="#94a3b8", linestyle="--", alpha=0.8,
+                                label="Early baseline")
+                    plt.axhline(float(np.mean(ep[-min(200, len(ep)):])),
+                                color="#34d399", linestyle="--", alpha=0.8,
+                                label="Current mean")
+                plt.xlabel("Episode"); plt.ylabel("Reward")
+                plt.title(f"SpindleFlow RL — Learning Curve (step {self.num_timesteps:,})")
+                plt.legend(); plt.grid(alpha=0.2); plt.tight_layout()
+                plt.savefig("/home/user/app/assets/reward_curve.png", dpi=150)
+                plt.close()
 
             def _on_step(self):
                 if self.num_timesteps - self._last_push < self._push_every:
@@ -251,10 +292,13 @@ def _training_thread():
                     _log(f"Periodic save at step {self.num_timesteps:,} ...")
                     self.model.save("/home/user/app/spindleflow_model_latest")
                     self._vec_env.save("/home/user/app/vec_normalize_latest.pkl")
+                    self._save_curve()
                     candidates = [
                         ("/home/user/app/spindleflow_model_latest.zip", "spindleflow_model_latest.zip"),
                         ("/home/user/app/vec_normalize_latest.pkl",     "vec_normalize_latest.pkl"),
                         ("/home/user/app/assets/training_log.txt",      "training_log.txt"),
+                        ("/home/user/app/assets/reward_curve.json",     "reward_curve.json"),
+                        ("/home/user/app/assets/reward_curve.png",      "reward_curve.png"),
                     ]
                     ops = [
                         CommitOperationAdd(path_in_repo=dst, path_or_fileobj=src)
@@ -328,7 +372,7 @@ def _training_thread():
         )
         periodic_push  = PeriodicHubPush(
             api=api, hf_repo=HF_REPO, hf_token=HF_TOKEN,
-            vec_env=vec_env, push_every=10_000,
+            vec_env=vec_env, reward_logger_ref=reward_logger, push_every=10_000,
         )
 
         model.learn(
