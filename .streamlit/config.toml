@@ -1,16 +1,6 @@
-[theme]
-base            = "dark"
-primaryColor    = "#00d4ff"
-backgroundColor = "#0f0f1a"
-secondaryBackgroundColor = "#151525"
-textColor       = "#e2e8f0"
-font            = "sans serif"
-
 [server]
-headless        = true
-port            = 7860
-enableCORS      = true
-maxUploadSize   = 50
-
-[browser]
-gatherUsageStats = false
+headless = true
+port = 7860
+address = "0.0.0.0"
+enableCORS = false
+enableXsrfProtection = false
