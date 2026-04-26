@@ -1,7 +1,7 @@
 training:
   seed: 42
-  total_timesteps: 500000
-  n_envs: 4
+  total_timesteps: 100000
+  n_envs: 1
   device: "auto"  # "cuda" if available, else "cpu"
 
 ppo:
@@ -71,7 +71,7 @@ environment:
 sector:
   name: "software_engineering"   # Change this to switch domains
   description: "Software product development including frontend, backend, databases, devops, and security"
-  use_llm_task_generation: true  # Set false to fall back to catalog-derived tasks
+  use_llm_task_generation: false  # Set false to fall back to catalog-derived tasks
   llm_task_model: "gpt-4o-mini"
   task_cache_size: 200           # Large cache reduces refill frequency; background thread handles refills
   # Technology stack injected into ambiguous task descriptions by TaskDecomposer.

@@ -105,6 +105,25 @@ def _training_thread():
         api = HfApi(token=HF_TOKEN)
         api.create_repo(repo_id=HF_REPO, repo_type="model", exist_ok=True)
 
+        # ── Force SentenceTransformer onto CUDA ─────────────
+        # encode() is called every step (scratchpad) + per specialist call.
+        # On CPU this costs ~250 ms/call → ~1 s/step. On CUDA it's ~10 ms.
+        _log("Patching SentenceTransformer to CUDA...")
+        import torch as _torch_st
+        if _torch_st.cuda.is_available():
+            try:
+                from sentence_transformers import SentenceTransformer as _ST
+                _orig_st_init = _ST.__init__
+                def _fast_st_init(self, *args, **kwargs):
+                    kwargs.setdefault("device", "cuda")
+                    _orig_st_init(self, *args, **kwargs)
+                _ST.__init__ = _fast_st_init
+                _log("SentenceTransformer → cuda ✓")
+            except Exception as _ep:
+                _log(f"ST patch skipped: {_ep}")
+        else:
+            _log("WARNING: CUDA not available for SentenceTransformer — CPU mode (slow)")
+
         # ── Patch env for simulate_specialists ──────────────
         _log("Loading environment...")
         from env.spindleflow_env import SpindleFlowEnv
@@ -286,7 +305,7 @@ def _training_thread():
         )
         periodic_push  = PeriodicHubPush(
             api=api, hf_repo=HF_REPO, hf_token=HF_TOKEN,
-            vec_env=vec_env, push_every=50_000,
+            vec_env=vec_env, push_every=10_000,
         )
 
         model.learn(
