@@ -13,8 +13,7 @@ from dotenv import load_dotenv
 
 load_dotenv()  # load OPENAI_API_KEY (and any other vars) from .env
 
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+# HF_HUB_OFFLINE intentionally NOT set — manual HF Hub downloads must work
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -81,19 +80,24 @@ def _load_trained_model(hf_repo: str):
     Temporarily lifts the HF_HUB_OFFLINE flag set at module level.
     """
     import pickle
-    _old_hf = os.environ.pop("HF_HUB_OFFLINE", None)
-    _old_tf = os.environ.pop("TRANSFORMERS_OFFLINE", None)
     try:
         from huggingface_hub import hf_hub_download
         from sb3_contrib import RecurrentPPO
 
-        model = RecurrentPPO.load(
-            hf_hub_download(hf_repo, "spindleflow_model.zip"), device="cpu"
-        )
+        _tok = os.getenv("HF_TOKEN") or None
+        # Try final model first, fall back to latest periodic checkpoint
+        try:
+            _model_path = hf_hub_download(hf_repo, "spindleflow_model.zip", token=_tok)
+        except Exception:
+            _model_path = hf_hub_download(hf_repo, "spindleflow_model_latest.zip", token=_tok)
+        model = RecurrentPPO.load(_model_path, device="cpu")
         obs_mean = obs_var = None
         clip_obs = 10.0
         try:
-            stats_path = hf_hub_download(hf_repo, "vec_normalize.pkl")
+            try:
+                stats_path = hf_hub_download(hf_repo, "vec_normalize.pkl", token=_tok)
+            except Exception:
+                stats_path = hf_hub_download(hf_repo, "vec_normalize_latest.pkl", token=_tok)
             with open(stats_path, "rb") as f:
                 vn = pickle.load(f)
             obs_mean = vn.obs_rms.mean.copy()
@@ -105,10 +109,7 @@ def _load_trained_model(hf_repo: str):
     except Exception as exc:
         return None, None, None, 10.0, str(exc)
     finally:
-        if _old_hf is not None:
-            os.environ["HF_HUB_OFFLINE"] = _old_hf
-        if _old_tf is not None:
-            os.environ["TRANSFORMERS_OFFLINE"] = _old_tf
+        pass
 
 
 def _predict(model, obs: np.ndarray, lstm_states, episode_starts,
@@ -1293,23 +1294,18 @@ def tab_training():
 
     c_fetch, _ = st.columns([2, 5])
     if c_fetch.button("📥 Fetch latest curve from HF Hub", key="fetch_curve"):
-        _old_hf = os.environ.pop("HF_HUB_OFFLINE", None)
-        _old_tf = os.environ.pop("TRANSFORMERS_OFFLINE", None)
         try:
             import shutil
             from huggingface_hub import hf_hub_download
-            src = hf_hub_download(HF_MODEL_REPO, "reward_curve.json")
+            _tok = os.getenv("HF_TOKEN") or None
+            src = hf_hub_download(HF_MODEL_REPO, "reward_curve.json",
+                                  token=_tok, force_download=True)
             ASSETS.mkdir(parents=True, exist_ok=True)
             shutil.copy(src, ASSETS / "reward_curve.json")
             st.success("reward_curve.json updated — chart will refresh.")
             st.cache_data.clear()
         except Exception as exc:
             st.error(f"Download failed: {exc}")
-        finally:
-            if _old_hf is not None:
-                os.environ["HF_HUB_OFFLINE"] = _old_hf
-            if _old_tf is not None:
-                os.environ["TRANSFORMERS_OFFLINE"] = _old_tf
 
     st.plotly_chart(fig_training_curve(), use_container_width=True)
 
@@ -1537,6 +1533,242 @@ def tab_architecture():
 
 
 # ─────────────────────────────────────────────────────────
+# Tab 7 — Output (Trained Policy)
+# ─────────────────────────────────────────────────────────
+def tab_output():
+    """Run the trained LSTM PPO policy on a custom task and show every specialist's output."""
+    st.markdown(
+        '<div style="font-size:12px;color:#64748b;margin-bottom:16px;">'
+        'Enter any software engineering task. The trained LSTM PPO policy decides which '
+        'specialists to delegate to — each specialist\'s individual output and the collective '
+        'synthesis are shown below.</div>',
+        unsafe_allow_html=True,
+    )
+
+    col_input, col_ctrl = st.columns([3, 1], gap="large")
+    with col_input:
+        sec("Task")
+        task_input = st.text_area(
+            "Task description",
+            height=110,
+            key="output_task_input",
+            placeholder=(
+                "Build a real-time collaborative code review tool with inline comments, "
+                "role-based access control, GitHub webhook integration, and CI/CD pipeline "
+                "status display. Include authentication with OAuth2."
+            ),
+        )
+    with col_ctrl:
+        sec("Config")
+        out_phase = st.selectbox("Curriculum phase", [1, 2, 3], index=1, key="output_phase")
+        st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+        run_btn = st.button(
+            "🚀 Run Trained Policy",
+            type="primary",
+            use_container_width=True,
+            key="output_run_btn",
+        )
+
+    if run_btn:
+        _task = (task_input or "").strip()
+        if not _task:
+            st.warning("Please enter a task description.")
+            return
+
+        with st.spinner("Loading trained model from HF Hub…"):
+            model, obs_mean, obs_var, clip_obs, model_err = _load_trained_model(HF_MODEL_REPO)
+        if model_err:
+            st.error(f"Model load failed: {model_err}")
+            return
+
+        st.success("Trained policy loaded ✓")
+
+        with st.spinner("Running episode with trained policy…"):
+            try:
+                env = SpindleFlowEnv(
+                    config_path=CONFIG, catalog_path=CATALOG,
+                    use_real_spindleflow=False, phase=int(out_phase),
+                )
+                # Inject custom task so the env uses the user's input
+                env.task_bank.sample = lambda: _task
+
+                obs, info = env.reset()
+                task_used = info.get("task", _task)
+
+                lstm_states    = None
+                episode_starts = np.array([True])
+                done           = False
+                rewards: list[float] = []
+
+                for _ in range(15):
+                    if done:
+                        break
+                    obs_arr = obs[np.newaxis, :].copy().astype(np.float32)
+                    if obs_mean is not None and obs_var is not None:
+                        obs_arr = np.clip(
+                            (obs_arr - obs_mean) / np.sqrt(obs_var + 1e-8),
+                            -clip_obs, clip_obs,
+                        )
+                    action_batch, lstm_states = model.predict(
+                        obs_arr,
+                        state=lstm_states,
+                        episode_start=episode_starts,
+                        deterministic=True,
+                    )
+                    action = action_batch[0]
+                    obs, r, term, trunc, _ = env.step(action)
+                    rewards.append(float(r))
+                    done = term or trunc
+                    episode_starts = np.array([done])
+
+                called  = list(env.called_ids)
+                edges   = [(e.caller_id, e.callee_id)
+                           for e in env.delegation_graph.get_delegation_path()]
+                spawned = list(getattr(env, "spawned_specialists", []))
+
+                st.session_state.output_results = {
+                    "task":    task_used,
+                    "rewards": rewards,
+                    "called":  called,
+                    "edges":   edges,
+                    "specialist_results": [
+                        {
+                            "id":         sr.specialist_id,
+                            "output":     sr.output,
+                            "status":     sr.status,
+                            "latency_ms": sr.latency_ms,
+                        }
+                        for sr in env.specialist_results
+                    ],
+                    "spawned": spawned,
+                }
+                # Keep env alive for delegation-graph rendering
+                st.session_state.output_env = env
+
+            except Exception as exc:
+                import traceback
+                st.error(f"Episode failed: {exc}")
+                st.code(traceback.format_exc(), language=None)
+                return
+
+        st.rerun()
+
+    # ── Display results ────────────────────────────────────────────────
+    results = st.session_state.get("output_results")
+    env_obj = st.session_state.get("output_env")
+
+    if results is None:
+        st.markdown(
+            '<div style="color:#334155;font-size:12px;padding:40px;text-align:center;">'
+            'Enter a task and click "Run Trained Policy" to see delegation and specialist outputs.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    # Task banner
+    st.markdown(
+        f'<div style="background:rgba(0,212,255,0.04);'
+        f'border:1px solid rgba(0,212,255,0.18);border-radius:10px;'
+        f'padding:14px 18px;margin:10px 0 16px;">'
+        f'<div style="font-size:9px;font-weight:700;color:#475569;'
+        f'text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">Task</div>'
+        f'<div style="font-size:13px;color:#e2e8f0;">{_html.escape(results["task"])}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Metrics strip
+    total_r = sum(results["rewards"])
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    mc1.metric("Total Reward",       f"{total_r:+.3f}")
+    mc2.metric("Steps",              len(results["rewards"]))
+    mc3.metric("Specialists Called", len(results["called"]))
+    mc4.metric("Auto-Spawned",       len(results["spawned"]))
+
+    # Delegation graph
+    sec("Delegation Graph")
+    if env_obj is not None:
+        class _GraphProxy:
+            registry            = env_obj.registry
+            spawned_specialists = results["spawned"]
+            env                 = env_obj
+
+        st.plotly_chart(
+            fig_delegation_graph(
+                _GraphProxy(),
+                results["called"],
+                results["edges"],
+                highlight_latest=False,
+                spawned_ids=results["spawned"],
+            ),
+            use_container_width=True,
+            key="output_dag",
+        )
+
+    # Auto-spawn alert
+    if results["spawned"]:
+        st.markdown(
+            '<div style="background:rgba(251,191,36,0.06);'
+            'border:1px solid rgba(251,191,36,0.22);border-radius:10px;'
+            'padding:10px 16px;margin:8px 0;">'
+            '<span style="font-size:10px;font-weight:700;color:#fbbf24;'
+            'text-transform:uppercase;letter-spacing:1px;">⚡ Auto-Spawned: </span>'
+            '<span style="font-size:12px;color:#e2e8f0;">'
+            + ", ".join(results["spawned"])
+            + '</span></div>',
+            unsafe_allow_html=True,
+        )
+
+    # Individual specialist outputs
+    spec_results = results["specialist_results"]
+    sec(f"Individual Specialist Outputs  ·  {len(spec_results)} called")
+
+    if not spec_results:
+        st.markdown(
+            '<div style="color:#475569;font-size:12px;padding:16px;'
+            'background:rgba(0,0,0,0.2);border-radius:8px;">'
+            'The policy issued STOP without delegating to any specialists.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        for sr in spec_results:
+            sid    = sr["id"]
+            color  = SPEC_COLORS.get(sid, "#7c3aed")
+            ok_clr = "#10b981" if sr["status"] == "success" else "#ef4444"
+            lat    = sr.get("latency_ms", 0)
+            label  = (
+                f"🤖  {sid.replace('_', ' ').title()}"
+                f"  ·  {sr['status']}  ·  {lat:.0f} ms"
+            )
+            with st.expander(label, expanded=True):
+                st.markdown(
+                    f'<div style="border-left:3px solid {color};'
+                    f'padding:4px 0 4px 12px;margin-bottom:8px;">'
+                    f'<span style="font-size:10px;color:{color};font-weight:700;">{sid}</span>'
+                    f'<span style="font-size:10px;color:#475569;">  ·  status: </span>'
+                    f'<span style="font-size:10px;color:{ok_clr};">{sr["status"]}</span>'
+                    f'<span style="font-size:10px;color:#475569;">  ·  {lat:.0f} ms</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                st.code(sr["output"] or "(no output)", language=None)
+
+    # Synthesized / collective output
+    sec("Synthesized Output  ·  Collective Response")
+    st.caption("All specialist outputs combined — this is what the orchestrator received.")
+    if spec_results:
+        parts = [
+            f"{'─'*52}\n[{sr['id'].upper()}]\n{'─'*52}\n{sr['output'] or '(empty)'}"
+            for sr in spec_results
+        ]
+        synthesis = "\n\n".join(parts)
+    else:
+        synthesis = "(no specialists called — policy chose STOP on first step)"
+    st.code(synthesis, language=None)
+
+
+# ─────────────────────────────────────────────────────────
 # Entry point
 # ─────────────────────────────────────────────────────────
 def main():
@@ -1545,13 +1777,14 @@ def main():
     S = _S()
     render_live_stats(S)
 
-    t1, t2, t3, t4, t5, t6 = st.tabs([
+    t1, t2, t3, t4, t5, t6, t7 = st.tabs([
         "⚡ Live Demo",
         "🤖 Specialists",
         "📈 Training",
         "🔍 Quality Demo",
         "🧪 Reward Lab",
         "🏗 Architecture",
+        "🎯 Output",
     ])
     with t1: tab_live_demo()
     with t2: tab_specialists()
@@ -1559,6 +1792,7 @@ def main():
     with t4: tab_quality()
     with t5: tab_reward_lab()
     with t6: tab_architecture()
+    with t7: tab_output()
 
 
 # Guard allows safe imports for testing without triggering the UI.
