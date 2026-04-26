@@ -22,10 +22,16 @@ import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from env.spindleflow_env import SpindleFlowEnv
-from env.state import EpisodeState
-from env.specialist_registry import SpecialistRegistry
-from orchestrator_widget import render_orchestrator
+try:
+    from env.spindleflow_env import SpindleFlowEnv
+    from env.state import EpisodeState
+    from env.specialist_registry import SpecialistRegistry
+    from orchestrator_widget import render_orchestrator
+except Exception as _import_err:
+    import traceback as _tb
+    st.error(f"Import failed: {_import_err}")
+    st.code(_tb.format_exc())
+    st.stop()
 
 # ─────────────────────────────────────────────────────────
 # Page config  (must be first Streamlit call)
