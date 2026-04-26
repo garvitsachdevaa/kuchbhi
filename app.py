@@ -14,8 +14,22 @@ Training starts automatically when the Space boots.
 Refresh the page or click "Refresh" to see live progress.
 """
 
-import sys, os
+import sys, os, subprocess
 print("=== PYTHON STARTED ===", flush=True)
+
+# Force CUDA-enabled PyTorch — the default PyPI wheel is CPU-only.
+# This must run before any `import torch` in the process.
+print("Installing CUDA torch...", flush=True)
+_r = subprocess.run(
+    [sys.executable, "-m", "pip", "install", "-q",
+     "--index-url", "https://download.pytorch.org/whl/cu121",
+     "torch>=2.2.0"],
+    capture_output=True, text=True,
+)
+if _r.returncode == 0:
+    print("CUDA torch installed OK.", flush=True)
+else:
+    print("CUDA torch install warning:", _r.stderr[-300:], flush=True)
 
 import gradio as gr
 print("=== GRADIO IMPORTED ===", flush=True)
