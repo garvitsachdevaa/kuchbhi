@@ -2,11 +2,13 @@ import sys, os, traceback
 from pathlib import Path
 import streamlit as st
 
-print("[SpindleFlow] wrapper starting", flush=True)
-
 _root = Path(__file__).resolve().parent
 
-# Page config fires before anything else so the browser gets a live response.
+for _p in (str(_root), str(_root / "demo")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+os.chdir(str(_root))
+
 st.set_page_config(
     page_title="SpindleFlow RL",
     page_icon="⚡",
@@ -14,36 +16,50 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Show a visible loading message while the heavy ML imports run (~20-30 s).
-_banner = st.empty()
-_banner.info("⏳ Loading SpindleFlow RL — first load takes ~30 s on CPU…")
 
-# Silence the duplicate set_page_config inside demo/streamlit_app.py.
-_real_spc = st.set_page_config
-st.set_page_config = lambda *a, **kw: None
+@st.cache_resource(show_spinner="⏳ Loading SpindleFlow RL — first load ~30 s on CPU…")
+def _warm():
+    """
+    Pre-load every heavy module into sys.modules exactly once.
+    cache_resource flushes the spinner to the browser BEFORE this runs,
+    so the user sees feedback and Streamlit stays alive during the 30 s wait.
+    Returns None on success, error string on failure.
+    """
+    try:
+        import torch  # noqa: F401
+        import numpy  # noqa: F401
+        import gymnasium  # noqa: F401
+        import stable_baselines3  # noqa: F401
+        import sb3_contrib  # noqa: F401
+        import sentence_transformers  # noqa: F401
+        import plotly  # noqa: F401
+        from env.spindleflow_env import SpindleFlowEnv  # noqa: F401
+        from env.state import EpisodeState  # noqa: F401
+        from env.specialist_registry import SpecialistRegistry  # noqa: F401
+        from orchestrator_widget import render_orchestrator  # noqa: F401
+        return None
+    except Exception as exc:
+        return traceback.format_exc()
 
-for _p in (str(_root), str(_root / "demo")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-os.chdir(str(_root))
 
-_demo = _root / "demo" / "streamlit_app.py"
-print(f"[SpindleFlow] running exec on {_demo}", flush=True)
+_err = _warm()
 
-try:
-    exec(
-        compile(_demo.read_text(encoding="utf-8"), str(_demo), "exec"),
-        {"__file__": str(_demo), "__name__": "__main__"},
-    )
-    print("[SpindleFlow] exec completed OK", flush=True)
-    _banner.empty()
-except SystemExit:
-    _banner.empty()
-except Exception as exc:
-    print(f"[SpindleFlow] ERROR: {exc}", file=sys.stderr, flush=True)
-    traceback.print_exc(file=sys.stderr)
-    _banner.empty()
-    st.error(f"SpindleFlow failed to load: {exc}")
-    st.code(traceback.format_exc())
-finally:
-    st.set_page_config = _real_spc
+if _err:
+    st.error("SpindleFlow failed to import dependencies.")
+    st.code(_err)
+else:
+    _real_spc = st.set_page_config
+    st.set_page_config = lambda *a, **kw: None
+    _demo = _root / "demo" / "streamlit_app.py"
+    try:
+        exec(
+            compile(_demo.read_text(encoding="utf-8"), str(_demo), "exec"),
+            {"__file__": str(_demo), "__name__": "__main__"},
+        )
+    except SystemExit:
+        pass
+    except Exception as exc:
+        st.error(f"SpindleFlow demo crashed: {exc}")
+        st.code(traceback.format_exc())
+    finally:
+        st.set_page_config = _real_spc
