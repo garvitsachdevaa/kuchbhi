@@ -164,8 +164,31 @@ def _training_thread():
         )
         obs, info = env.reset()
         env.step(env.action_space.sample())
-        env.close()
         _log(f"Smoke test OK — obs shape {obs.shape}")
+
+        # ── Benchmark: encode speed and full step speed ──────
+        _log("Benchmarking SentenceTransformer encode speed...")
+        _N_enc = 50
+        _t0 = time.perf_counter()
+        for _ in range(_N_enc):
+            env.registry.embed_query("Software engineering task requiring specialist delegation")
+        _enc_ms = (time.perf_counter() - _t0) / _N_enc * 1000
+        _enc_device = "CUDA ✓ fast" if _enc_ms < 50 else "CPU — slow, patch may have failed"
+        _log(f"Encode speed  : {_enc_ms:.1f} ms/call  [{_enc_device}]")
+
+        _log("Benchmarking full env.step() speed...")
+        _N_steps = 30
+        obs_b, _ = env.reset()
+        _t0 = time.perf_counter()
+        for _ in range(_N_steps):
+            obs_b, _, _d, _, _ = env.step(env.action_space.sample())
+            if _d:
+                obs_b, _ = env.reset()
+        _step_ms = (time.perf_counter() - _t0) / _N_steps * 1000
+        _step_ok = "fast ✓" if _step_ms < 100 else "slow — check logs"
+        _log(f"Step speed    : {_step_ms:.1f} ms/step [{_step_ok}]")
+        _log(f"Projected 100k steps: {100_000 * _step_ms / 1000 / 60:.0f} min")
+        env.close()
 
         # ── Training ────────────────────────────────────────
         import torch, yaml
