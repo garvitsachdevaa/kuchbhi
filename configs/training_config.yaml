@@ -1,6 +1,6 @@
 training:
   seed: 42
-  total_timesteps: 100000
+  total_timesteps: 30000
   n_envs: 1
   device: "auto"  # "cuda" if available, else "cpu"
 

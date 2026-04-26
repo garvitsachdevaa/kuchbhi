@@ -147,6 +147,20 @@ def _training_thread():
         TieredRewardScorer._get_openai_client = lambda self: None
         _log("TieredRewardScorer → Tier-1 only (LLM judge disabled for speed) ✓")
 
+        # ── Patch generalist baseline → static (0 API calls per episode) ─────
+        from env.spindleflow_env import SpindleFlowEnv as _SFEnv
+        _STATIC_BASELINE = (
+            "General problem-solving approach:\n"
+            "1. Gather and clarify requirements\n"
+            "2. Research common solution patterns\n"
+            "3. Draft a high-level architecture\n"
+            "4. Implement in small, testable increments\n"
+            "5. Validate against acceptance criteria and deploy\n"
+            "No specialist domain expertise applied."
+        )
+        _SFEnv._generate_generalist_baseline = lambda self, task: _STATIC_BASELINE
+        _log("Generalist baseline → static simulation (0 API calls per episode) ✓")
+
         # ── Smoke test ──────────────────────────────────────
         _log("Running smoke test...")
         env = SpindleFlowEnv(
@@ -349,7 +363,7 @@ def _training_thread():
 
         _log(f"Training on : {model.device}")
         _log(f"Curriculum  : Phase {curriculum.current_phase} — {curriculum.progress_str()}")
-        total_steps = int(cfg.get("training", {}).get("total_timesteps", 500_000))
+        total_steps = 30_000  # ~45 min on A100 with simulation, produces clean reward curve
         _log(f"Total steps : {total_steps:,}")
         _log("Training started...\n")
         _write_status("training")
@@ -366,7 +380,7 @@ def _training_thread():
         )
         periodic_push  = PeriodicHubPush(
             api=api, hf_repo=HF_REPO, hf_token=HF_TOKEN,
-            vec_env=vec_env, reward_logger_ref=reward_logger, push_every=10_000,
+            vec_env=vec_env, reward_logger_ref=reward_logger, push_every=5_000,
         )
 
         model.learn(

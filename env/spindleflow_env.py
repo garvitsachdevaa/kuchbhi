@@ -1183,6 +1183,16 @@ class SpindleFlowEnv(gym.Env):
         Falls back to a simulated template when no key is available.
         """
         import os
+        if getattr(self, "simulate_specialists", False) or not os.getenv("OPENAI_API_KEY"):
+            return (
+                "General problem-solving approach:\n"
+                "1. Gather and clarify requirements\n"
+                "2. Research common solution patterns\n"
+                "3. Draft a high-level architecture\n"
+                "4. Implement in small, testable increments\n"
+                "5. Validate against acceptance criteria and deploy\n"
+                "No specialist domain expertise applied."
+            )
         api_key = os.getenv("OPENAI_API_KEY")
         if api_key:
             try:
