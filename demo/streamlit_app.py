@@ -1432,6 +1432,25 @@ def tab_specialists():
 def tab_training():
     sec("Training Progress — Mean Reward per Episode")
 
+    st.markdown(
+        '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.20);'
+        'border-radius:12px;padding:16px 20px;margin-bottom:18px;">'
+        '<div style="font-size:13px;font-weight:700;color:#00d4ff;margin-bottom:6px;">'
+        '🔁 Want to run a fresh training run?</div>'
+        '<div style="font-size:12px;color:#94a3b8;margin-bottom:10px;">'
+        'Open the <strong style="color:#e2e8f0;">Training Space</strong> below, then click '
+        '<strong style="color:#e2e8f0;">▶ Start Training</strong>. '
+        'When the run completes the new model is pushed to HF Hub and this demo loads it automatically.<br>'
+        '<span style="color:#fb923c;font-size:11px;">⚠️ Starting a new run will overwrite the current A100-trained policy.</span>'
+        '</div>'
+        '<a href="https://huggingface.co/spaces/garvitsachdeva/finalRLEnv" target="_blank" '
+        'style="display:inline-block;background:rgba(0,212,255,0.12);border:1px solid rgba(0,212,255,0.35);'
+        'color:#00d4ff;padding:7px 18px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;">'
+        '🚀 Open Training Space →</a>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
     c_fetch, _ = st.columns([2, 5])
     if c_fetch.button("📥 Fetch latest curve from HF Hub", key="fetch_curve"):
         try:

@@ -605,7 +605,7 @@ with gr.Blocks(title="SpindleFlow RL Training", css=CSS) as demo:
     gr.Markdown(
         "This Space runs the **RecurrentPPO (LSTM PPO)** training for SpindleFlow RL. "
         "The trained model is pushed to HF Hub when training completes and is loaded "
-        "automatically by the [SpindleFlow Demo Space](https://huggingface.co/spaces/garvitsachdeva/spindleflow-demo)."
+        "automatically by the [SpindleFlow-RL Demo Space](https://huggingface.co/spaces/garvitsachdeva/SpindleFlow-RL)."
     )
 
     # ── Warning banner ────────────────────────────────────────
