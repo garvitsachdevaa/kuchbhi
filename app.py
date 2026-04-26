@@ -14,22 +14,8 @@ Training starts automatically when the Space boots.
 Refresh the page or click "Refresh" to see live progress.
 """
 
-import sys, os, subprocess
+import sys, os
 print("=== PYTHON STARTED ===", flush=True)
-
-# Force CUDA-enabled PyTorch — the default PyPI wheel is CPU-only.
-# This must run before any `import torch` in the process.
-print("Installing CUDA torch...", flush=True)
-_r = subprocess.run(
-    [sys.executable, "-m", "pip", "install", "-q",
-     "--index-url", "https://download.pytorch.org/whl/cu121",
-     "torch>=2.2.0"],
-    capture_output=True, text=True,
-)
-if _r.returncode == 0:
-    print("CUDA torch installed OK.", flush=True)
-else:
-    print("CUDA torch install warning:", _r.stderr[-300:], flush=True)
 
 import gradio as gr
 print("=== GRADIO IMPORTED ===", flush=True)
@@ -152,6 +138,14 @@ def _training_thread():
 
             SpindleFlowEnv._call_specialist = _new_call
             SpindleFlowEnv._simulate_patched = True
+
+        # ── Disable Tier-2 LLM scoring during training ───────
+        # TieredRewardScorer._tier2_score calls OpenAI API (>1000ms per episode).
+        # Returning None forces it to fall back to Tier-1 embedding scoring (~fast),
+        # preserving a meaningful reward signal without API latency.
+        from reward.tiered_reward import TieredRewardScorer
+        TieredRewardScorer._get_openai_client = lambda self: None
+        _log("TieredRewardScorer → Tier-1 only (LLM judge disabled for speed) ✓")
 
         # ── Smoke test ──────────────────────────────────────
         _log("Running smoke test...")
