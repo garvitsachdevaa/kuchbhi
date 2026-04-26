@@ -1,9 +1,12 @@
-import sys
+import sys, os
 from pathlib import Path
 
-# Ensure the project root is on sys.path so all local packages are importable
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+root = Path(__file__).resolve().parent
+sys.path.insert(0, str(root))
+os.chdir(str(root))
 
-# Entry point — delegate to the full demo app
-from demo.streamlit_app import main
-main()
+demo = root / "demo" / "streamlit_app.py"
+with open(demo, encoding="utf-8") as f:
+    code = f.read()
+
+exec(compile(code, str(demo), "exec"), {"__file__": str(demo), "__name__": "__main__"})
