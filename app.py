@@ -532,32 +532,47 @@ model = RecurrentPPO.load(hf_hub_download("{HF_REPO}", "spindleflow_model.zip"))
         _write_status("error", error=str(exc))
 
 
-# ── Start training immediately on Space boot ──────────────────
-_thread = threading.Thread(target=_training_thread, daemon=True)
-_thread.start()
+# ── Training state (NOT auto-started — judge must click the button) ──────────
+_training_started = False
+_training_lock    = threading.Lock()
+
+
+def _start_training_once():
+    """Start the training thread exactly once; safe to call multiple times."""
+    global _training_started
+    with _training_lock:
+        if _training_started:
+            return "⚠️  Training is already running — see the log below."
+        _training_started = True
+    _write_status("starting")
+    _log("Training started by user request.")
+    t = threading.Thread(target=_training_thread, daemon=True)
+    t.start()
+    return "🔄  Training started! Logs will appear below (auto-refresh every 10 s)."
 
 
 # ── Gradio UI ─────────────────────────────────────────────────
 def _get_state():
-    # Read from files — works across Gradio worker processes
     try:
         with open(_STATUS_FILE, "r", encoding="utf-8") as f:
             s = json.load(f)
         phase, done, error = s.get("phase", "starting"), s.get("done", False), s.get("error")
     except Exception:
-        phase, done, error = "starting", False, None
+        phase, done, error = "idle", False, None
 
     try:
         with open(_LOG_FILE, "r", encoding="utf-8") as f:
             lines = f.readlines()
         log_text = "".join(lines[-120:])
     except Exception:
-        log_text = ""
+        log_text = "(no logs yet — click ▶ Start Training to begin)"
 
     if done:
         label = "✅  Training complete — model pushed to HF Hub"
     elif error:
         label = f"❌  Error: {error}"
+    elif phase == "idle":
+        label = "💤  Idle — click ▶ Start Training below to begin a fresh run"
     else:
         icons = {"starting": "⏳", "training": "🔄", "saving": "💾", "uploading": "📤"}
         label = f"{icons.get(phase, '🔄')}  {phase.capitalize()}..."
@@ -577,6 +592,9 @@ body, .gradio-container { background: #0f172a !important; }
     background: #0f172a !important; color: #94a3b8 !important;
     border: 1px solid #1e293b !important;
 }
+.warning-box { background: #431407 !important; border: 1px solid #ea580c !important;
+               border-radius: 8px !important; padding: 12px !important; }
+.warning-box p { color: #fed7aa !important; font-size: 0.9rem !important; }
 h1 { color: #f1f5f9 !important; }
 p, label { color: #94a3b8 !important; }
 footer { display: none !important; }
@@ -585,29 +603,54 @@ footer { display: none !important; }
 with gr.Blocks(title="SpindleFlow RL Training", css=CSS) as demo:
     gr.Markdown("# 🤖 SpindleFlow RL — Training Dashboard")
     gr.Markdown(
-        "Live training log — updates every 10 s automatically. "
-        "When complete the trained model is pushed to your HF Hub repo."
+        "This Space runs the **RecurrentPPO (LSTM PPO)** training for SpindleFlow RL. "
+        "The trained model is pushed to HF Hub when training completes and is loaded "
+        "automatically by the [SpindleFlow Demo Space](https://huggingface.co/spaces/garvitsachdeva/spindleflow-demo)."
     )
+
+    # ── Warning banner ────────────────────────────────────────
+    gr.HTML("""
+    <div class="warning-box" style="background:#431407;border:1px solid #ea580c;
+         border-radius:8px;padding:14px;margin-bottom:8px;">
+      <strong style="color:#fb923c;font-size:1rem;">⚠️  Warning — Read Before Starting</strong>
+      <p style="color:#fed7aa;margin:6px 0 0;font-size:0.88rem;">
+        Clicking <strong>▶ Start Training</strong> will launch a full retraining run
+        (~30 k steps). When complete it <strong>overwrites</strong>
+        <code>spindleflow_model.zip</code> in the model repo with the new weights.
+        The live demo Space will then load this new model on its next cold start.
+        Only start a new run if you intentionally want to replace the current trained policy.
+      </p>
+    </div>
+    """)
 
     with gr.Row():
         status_box = gr.Textbox(
             label="Status",
-            value="⏳  Starting...",
+            value="💤  Idle — click ▶ Start Training to begin",
             interactive=False,
             scale=4,
             elem_classes="status-box",
         )
-        refresh_btn = gr.Button("🔄  Refresh now", scale=1, variant="primary")
+        refresh_btn = gr.Button("🔄  Refresh", scale=1, variant="secondary")
+
+    with gr.Row():
+        start_btn = gr.Button("▶  Start Training", scale=3, variant="primary")
+        gr.Markdown(
+            "<span style='color:#94a3b8;font-size:0.8rem;line-height:2.5'>"
+            "Requires HF_TOKEN + HF_MODEL_REPO secrets to be set in Space Settings.</span>",
+            scale=3,
+        )
 
     log_box = gr.Textbox(
         label="Training log (last 120 lines)",
-        value="",
+        value="(no logs yet — click ▶ Start Training to begin)",
         lines=28,
         max_lines=40,
         interactive=False,
         elem_classes="log-box",
     )
 
+    start_btn.click(fn=_start_training_once, outputs=[status_box])
     refresh_btn.click(fn=_get_state, outputs=[status_box, log_box])
     demo.load(fn=_get_state, outputs=[status_box, log_box])
     timer = gr.Timer(value=10)

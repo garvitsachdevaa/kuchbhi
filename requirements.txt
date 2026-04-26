@@ -1,20 +1,16 @@
---index-url https://download.pytorch.org/whl/cu121
---extra-index-url https://pypi.org/simple
-torch
-openenv>=0.1.0
 stable-baselines3>=2.3.0
 sb3-contrib>=2.3.0
 gymnasium>=0.29.1
+torch>=2.2.0
 numpy>=1.26.0
 sentence-transformers>=3.0.0
 openai>=1.30.0
 pyyaml>=6.0.1
 transformers>=4.40.0
-trl>=0.8.6
-datasets>=2.19.0
-huggingface_hub>=0.33.5
-gradio>=5.50.0
+huggingface_hub>=0.23.0
+streamlit>=1.32.0
+plotly>=5.20.0
+scipy>=1.12.0
 matplotlib>=3.8.0
-audioop-lts>=0.2.1; python_version>="3.13"
 click>=8.0.0
 python-dotenv>=1.0.0
