@@ -70,6 +70,65 @@ def _get_preset_tasks(n: int = 8) -> list[str]:
 
 PRESET_TASKS = _get_preset_tasks()
 
+HF_MODEL_REPO = "garvitsachdeva/spindleflow-rl"
+
+
+@st.cache_resource
+def _load_trained_model(hf_repo: str):
+    """Download RecurrentPPO + VecNormalize stats from HF Hub.
+
+    Returns (model, obs_mean, obs_var, clip_obs, error_str).
+    Temporarily lifts the HF_HUB_OFFLINE flag set at module level.
+    """
+    import pickle
+    _old_hf = os.environ.pop("HF_HUB_OFFLINE", None)
+    _old_tf = os.environ.pop("TRANSFORMERS_OFFLINE", None)
+    try:
+        from huggingface_hub import hf_hub_download
+        from sb3_contrib import RecurrentPPO
+
+        model = RecurrentPPO.load(
+            hf_hub_download(hf_repo, "spindleflow_model.zip"), device="cpu"
+        )
+        obs_mean = obs_var = None
+        clip_obs = 10.0
+        try:
+            stats_path = hf_hub_download(hf_repo, "vec_normalize.pkl")
+            with open(stats_path, "rb") as f:
+                vn = pickle.load(f)
+            obs_mean = vn.obs_rms.mean.copy()
+            obs_var  = vn.obs_rms.var.copy()
+            clip_obs = float(vn.clip_obs)
+        except Exception:
+            pass
+        return model, obs_mean, obs_var, clip_obs, None
+    except Exception as exc:
+        return None, None, None, 10.0, str(exc)
+    finally:
+        if _old_hf is not None:
+            os.environ["HF_HUB_OFFLINE"] = _old_hf
+        if _old_tf is not None:
+            os.environ["TRANSFORMERS_OFFLINE"] = _old_tf
+
+
+def _predict(model, obs: np.ndarray, lstm_states, episode_starts,
+             obs_mean, obs_var, clip_obs: float):
+    """Normalize obs and call model.predict(); return (action, new_lstm_states)."""
+    obs_arr = obs[np.newaxis, :].copy().astype(np.float32)
+    if obs_mean is not None and obs_var is not None:
+        obs_arr = np.clip(
+            (obs_arr - obs_mean) / np.sqrt(obs_var + 1e-8),
+            -clip_obs, clip_obs,
+        )
+    action_batch, new_states = model.predict(
+        obs_arr,
+        state=lstm_states,
+        episode_start=episode_starts,
+        deterministic=True,
+    )
+    return action_batch[0], new_states
+
+
 DARK = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
@@ -101,6 +160,10 @@ class Session:
         self.obs_history: list[dict] = []
         # Specialists auto-spawned for this episode
         self.spawned_specialists: list[str] = []
+        # Trained policy inference state
+        self.obs_current: np.ndarray | None = None
+        self.lstm_states = None
+        self.episode_starts = np.array([True])
 
     def boot(self):
         if self.env is None:
@@ -123,6 +186,9 @@ class Session:
         self.step_entropies  = []
         self.obs_history     = []
         self.spawned_specialists: list[str] = list(info.get("spawned_specialists", []))
+        self.obs_current    = obs
+        self.lstm_states    = None
+        self.episode_starts = np.array([True])
         return obs, info
 
     def step(self, action):
@@ -133,6 +199,8 @@ class Session:
         self.actions.append(info)
         self.step_n += 1
         self.done = term or trunc
+        self.obs_current    = obs
+        self.episode_starts = np.array([self.done])
 
         # Capture step snapshot for replay
         called = info.get("called_specialists", [])
@@ -887,12 +955,27 @@ def tab_live_demo():
         reset_btn = c1.button("Reset Episode",    type="primary",    use_container_width=True, key="reset_btn")
         run_btn   = c2.button("Run Full Episode", use_container_width=True,                    key="run_btn")
         st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
+
+        use_trained = st.checkbox("🤖 Use Trained Policy", value=False, key="use_trained",
+                                  help="Load the trained RecurrentPPO model from HF Hub")
+        trained_model = obs_mean = obs_var = None
+        clip_obs = 10.0
+        if use_trained:
+            with st.spinner("Loading trained model from HF Hub…"):
+                trained_model, obs_mean, obs_var, clip_obs, model_err = _load_trained_model(HF_MODEL_REPO)
+            if model_err:
+                st.error(f"Model load failed: {model_err}")
+            else:
+                st.success("Trained policy loaded ✓")
+
         cat       = _load_catalog()
-        act_type  = st.selectbox("Action type",
+        act_type  = st.selectbox("Action type (manual mode)",
                                  ["RANDOM", "STOP", "CALL SPECIALIST", "PARALLEL SPAWN"],
-                                 key="act_type")
+                                 key="act_type",
+                                 disabled=use_trained)
         spec_ids  = [sp["id"] for sp in cat]
-        spec_ch   = st.selectbox("Target specialist", spec_ids, key="spec_ch")
+        spec_ch   = st.selectbox("Target specialist", spec_ids, key="spec_ch",
+                                 disabled=use_trained)
         step_btn  = st.button("Execute One Step",
                               disabled=(S.env is None or S.done),
                               use_container_width=True, key="step_btn")
@@ -918,25 +1001,31 @@ def tab_live_demo():
 
     # ── Step ───────────────────────────────────────────────
     if step_btn and S.env is not None and not S.done:
-        action = np.zeros(S.env.action_space.shape, dtype=np.float32)
-        if act_type == "STOP":
-            action[0] = 1.0
-        elif act_type == "CALL SPECIALIST":
-            ids = S.registry.list_ids()
-            if spec_ch in ids:
-                idx = ids.index(spec_ch)
-                if idx < S.env.max_specialists:
-                    action[1 + idx] = 1.0
-            else:
-                action[1] = 1.0
-        elif act_type == "PARALLEL SPAWN":
-            action[0] = 6.0
-            action[1] = 1.0
-            if S.env.max_specialists > 1:
-                action[2] = 1.0
-            action[1 + S.env.max_specialists] = 1.0
+        if use_trained and trained_model is not None and S.obs_current is not None:
+            action, S.lstm_states = _predict(
+                trained_model, S.obs_current, S.lstm_states,
+                S.episode_starts, obs_mean, obs_var, clip_obs,
+            )
         else:
-            action = S.env.action_space.sample()
+            action = np.zeros(S.env.action_space.shape, dtype=np.float32)
+            if act_type == "STOP":
+                action[0] = 1.0
+            elif act_type == "CALL SPECIALIST":
+                ids = S.registry.list_ids()
+                if spec_ch in ids:
+                    idx = ids.index(spec_ch)
+                    if idx < S.env.max_specialists:
+                        action[1 + idx] = 1.0
+                else:
+                    action[1] = 1.0
+            elif act_type == "PARALLEL SPAWN":
+                action[0] = 6.0
+                action[1] = 1.0
+                if S.env.max_specialists > 1:
+                    action[2] = 1.0
+                action[1 + S.env.max_specialists] = 1.0
+            else:
+                action = S.env.action_space.sample()
 
         _, r, term, trunc, info = S.step(action)
         done = term or trunc
@@ -962,7 +1051,14 @@ def tab_live_demo():
             for _ in range(15):
                 if S.done:
                     break
-                _, _, _, _, info = S.step(S.env.action_space.sample())
+                if use_trained and trained_model is not None and S.obs_current is not None:
+                    action, S.lstm_states = _predict(
+                        trained_model, S.obs_current, S.lstm_states,
+                        S.episode_starts, obs_mean, obs_var, clip_obs,
+                    )
+                else:
+                    action = S.env.action_space.sample()
+                _, _, _, _, info = S.step(action)
         # Use cumulative called_ids so graph stays populated even after STOP step
         called = list(S.env.called_ids) if S.env else []
         edges  = [(e.caller_id, e.callee_id)
@@ -1194,6 +1290,27 @@ def tab_specialists():
 # ─────────────────────────────────────────────────────────
 def tab_training():
     sec("Training Progress — Mean Reward per Episode")
+
+    c_fetch, _ = st.columns([2, 5])
+    if c_fetch.button("📥 Fetch latest curve from HF Hub", key="fetch_curve"):
+        _old_hf = os.environ.pop("HF_HUB_OFFLINE", None)
+        _old_tf = os.environ.pop("TRANSFORMERS_OFFLINE", None)
+        try:
+            import shutil
+            from huggingface_hub import hf_hub_download
+            src = hf_hub_download(HF_MODEL_REPO, "reward_curve.json")
+            ASSETS.mkdir(parents=True, exist_ok=True)
+            shutil.copy(src, ASSETS / "reward_curve.json")
+            st.success("reward_curve.json updated — chart will refresh.")
+            st.cache_data.clear()
+        except Exception as exc:
+            st.error(f"Download failed: {exc}")
+        finally:
+            if _old_hf is not None:
+                os.environ["HF_HUB_OFFLINE"] = _old_hf
+            if _old_tf is not None:
+                os.environ["TRANSFORMERS_OFFLINE"] = _old_tf
+
     st.plotly_chart(fig_training_curve(), use_container_width=True)
 
     sec("Policy Entropy — Action Confidence Over Training")
