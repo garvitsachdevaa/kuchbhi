@@ -692,6 +692,131 @@ def fig_training_entropy() -> go.Figure:
 
 
 # ─────────────────────────────────────────────────────────
+# Quality-comparison helpers
+# ─────────────────────────────────────────────────────────
+def _generate_generic_output(task: str) -> str:
+    """Call GPT-4o-mini directly with the task — no specialist routing."""
+    import os
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return (
+            "General problem-solving approach:\n"
+            "1. Gather and clarify requirements\n"
+            "2. Research common solution patterns\n"
+            "3. Draft a high-level architecture\n"
+            "4. Implement in small, testable increments\n"
+            "5. Validate against acceptance criteria and deploy\n"
+            "No specialist domain expertise applied."
+        )
+    try:
+        from openai import OpenAI
+        resp = OpenAI(api_key=api_key).chat.completions.create(
+            model="gpt-4o-mini",
+            max_tokens=600,
+            messages=[
+                {"role": "system",
+                 "content": "You are a general-purpose software engineering assistant."},
+                {"role": "user",
+                 "content": f"Provide a detailed solution approach for this task:\n\n{task}"},
+            ],
+        )
+        return resp.choices[0].message.content
+    except Exception as exc:
+        return f"(Generic output generation failed: {exc})"
+
+
+def _t1_relevance(task: str, output: str, registry) -> float:
+    """Cosine similarity between task and output embeddings, scaled 0–10."""
+    try:
+        import numpy as np
+        t = registry.embed_query(task)
+        o = registry.embed_query(output[:800])
+        if t is None or o is None:
+            return 0.0
+        cos = float(np.dot(t, o) / (np.linalg.norm(t) * np.linalg.norm(o) + 1e-8))
+        return round(max(0.0, cos) * 10, 2)
+    except Exception:
+        return 0.0
+
+
+def _judge_compare(task: str, generic: str, specialist: str) -> dict | None:
+    """GPT-4o-mini rates both outputs on 4 dimensions. Returns {dim: [generic, specialist]}."""
+    import os, json
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    prompt = (
+        f"Task:\n{task[:400]}\n\n"
+        f"Output A (generic, no specialist routing):\n{generic[:700]}\n\n"
+        f"Output B (specialist-routed by trained policy):\n{specialist[:700]}\n\n"
+        "Rate each output 1–10 on: technical_depth, specificity, actionability, coverage.\n"
+        'Return JSON only: {"technical_depth":[A,B],"specificity":[A,B],'
+        '"actionability":[A,B],"coverage":[A,B]}'
+    )
+    try:
+        from openai import OpenAI
+        resp = OpenAI(api_key=api_key).chat.completions.create(
+            model="gpt-4o-mini",
+            max_tokens=150,
+            response_format={"type": "json_object"},
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return json.loads(resp.choices[0].message.content)
+    except Exception:
+        return None
+
+
+def fig_radar_comparison(
+    gen_scores: dict,
+    spec_scores: dict,
+) -> go.Figure:
+    dims   = list(gen_scores.keys())
+    g_vals = [gen_scores[d]  for d in dims]
+    s_vals = [spec_scores[d] for d in dims]
+    dims_c = dims   + [dims[0]]
+    g_c    = g_vals + [g_vals[0]]
+    s_c    = s_vals + [s_vals[0]]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=g_c, theta=dims_c, fill="toself",
+        fillcolor="rgba(239,68,68,0.10)",
+        line=dict(color="#ef4444", width=2),
+        name="Generic (no routing)",
+    ))
+    fig.add_trace(go.Scatterpolar(
+        r=s_c, theta=dims_c, fill="toself",
+        fillcolor="rgba(0,212,255,0.13)",
+        line=dict(color="#00d4ff", width=2.5),
+        name="Specialist-routed",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#e2e8f0", family="Inter, system-ui, sans-serif"),
+        polar=dict(
+            bgcolor="rgba(0,0,0,0)",
+            radialaxis=dict(
+                visible=True, range=[0, 10],
+                gridcolor="rgba(255,255,255,0.08)",
+                tickfont=dict(size=9, color="#475569"),
+            ),
+            angularaxis=dict(
+                gridcolor="rgba(255,255,255,0.08)",
+                tickfont=dict(size=11, color="#94a3b8"),
+            ),
+        ),
+        title=dict(
+            text="Quality Radar — Generic vs Specialist-Routed",
+            font=dict(size=13, color="#94a3b8"),
+        ),
+        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="#94a3b8", size=11)),
+        height=420,
+        margin=dict(l=60, r=60, t=60, b=40),
+    )
+    return fig
+
+
+# ─────────────────────────────────────────────────────────
 # UI helpers
 # ─────────────────────────────────────────────────────────
 def inject_css():
@@ -1218,6 +1343,37 @@ def tab_specialists():
         specialists = [_SP(d) for d in _load_catalog()]
         source_note = "Showing YAML catalog — run an episode to load the live registry (includes dynamic additions)."
 
+    # ── Dynamically spawned specialists (accumulated from Output tab runs) ──
+    spawned_pool = st.session_state.get("spawned_pool", [])
+    if spawned_pool:
+        sec(f"⚡ Dynamically Spawned  ·  {len(spawned_pool)} new agent{'s' if len(spawned_pool) != 1 else ''}")
+        st.caption(
+            "These specialists were auto-created during Output tab runs — "
+            "triggered when no existing specialist had sufficient domain coverage (similarity < threshold)."
+        )
+        pool_cols = st.columns(min(len(spawned_pool), 4))
+        for i, sp in enumerate(spawned_pool):
+            with pool_cols[i % 4]:
+                st.markdown(f"""
+<div style="background:rgba(251,191,36,0.06);border:1px solid rgba(251,191,36,0.28);
+            border-left:3px solid #fbbf24;border-radius:12px;
+            padding:14px;margin-bottom:10px;">
+  <div style="font-size:11px;font-weight:700;color:#fbbf24;margin-bottom:5px;">
+    ⚡ {_html.escape(sp['role'])}
+  </div>
+  <div style="font-size:10px;color:#475569;margin-bottom:6px;font-style:italic;">
+    Triggered by: {_html.escape(sp['triggered_by'][:70])}…
+  </div>
+  <div style="font-size:11px;color:#64748b;line-height:1.5;">
+    {_html.escape(sp['description'][:100])}…
+  </div>
+  <div style="font-size:10px;color:#334155;margin-top:8px;padding-top:8px;
+              border-top:1px solid rgba(255,255,255,0.05);">
+    {sp['avg_latency_ms']} ms &nbsp;·&nbsp; {', '.join(sp.get('complexity_affinity', []))}
+  </div>
+</div>""", unsafe_allow_html=True)
+        st.markdown("---")
+
     n = len(specialists)
     sec(f"Roster — {n} specialist{'s' if n != 1 else ''}, capability-embedded")
     if source_note:
@@ -1363,31 +1519,148 @@ def tab_training():
 # Tab 4 — Quality Demo
 # ─────────────────────────────────────────────────────────
 def tab_quality():
-    sec("Before vs After Delegation Learning")
-    if st.button("Load Demo Comparison", type="primary", key="load_demo"):
-        p = ASSETS / "demo_moment_1.json"
-        if not p.exists():
-            st.error("Run `python demo/precompute_demo.py` first to generate demo assets.")
-        else:
-            with open(p) as f:
-                d = json.load(f)
+    results = st.session_state.get("output_results")
+    env_obj = st.session_state.get("output_env")
+
+    sec("Live Quality Comparison — Generic vs Specialist-Routed")
+
+    if results is None:
+        st.markdown(
+            '<div style="background:rgba(245,158,11,0.05);border:1px solid rgba(245,158,11,0.2);'
+            'border-radius:12px;padding:28px;text-align:center;">'
+            '<div style="font-size:13px;color:#fbbf24;font-weight:600;margin-bottom:8px;">'
+            'No Output run yet</div>'
+            '<div style="font-size:12px;color:#64748b;">'
+            'Go to the <b>🎯 Output</b> tab, enter a task, and click '
+            '"Run Trained Policy" — then return here to generate the quality comparison.'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        task         = results["task"]
+        spec_results = results["specialist_results"]
+        specialist_text = "\n\n".join(
+            f"[{sr['id'].upper()}]\n{sr['output'] or ''}"
+            for sr in spec_results if sr.get("output")
+        ) or "(no specialist output)"
+
+        # Task banner
+        st.markdown(
+            f'<div style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.18);'
+            f'border-radius:10px;padding:12px 18px;margin-bottom:16px;">'
+            f'<span style="font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;'
+            f'letter-spacing:1px;">Comparing outputs for: </span>'
+            f'<span style="font-size:12px;color:#e2e8f0;">{_html.escape(task[:140])}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        comp_data = st.session_state.get("quality_comparison")
+        already_computed = comp_data is not None and comp_data.get("task") == task
+
+        if not already_computed:
+            if st.button("⚡ Generate Quality Comparison", type="primary", key="gen_comp_btn"):
+                with st.spinner("Generating generic output + running GPT-4o-mini judge…"):
+                    generic_text = _generate_generic_output(task)
+                    registry     = env_obj.registry if env_obj else None
+
+                    gen_t1  = _t1_relevance(task, generic_text,    registry) if registry else 5.0
+                    spec_t1 = _t1_relevance(task, specialist_text, registry) if registry else 7.0
+
+                    judge = _judge_compare(task, generic_text, specialist_text)
+
+                    def _pick(key, fallback_g, fallback_s):
+                        pair = (judge or {}).get(key, [fallback_g, fallback_s])
+                        return float(pair[0]), float(pair[1])
+
+                    td_g, td_s = _pick("technical_depth", 5, 7)
+                    sp_g, sp_s = _pick("specificity",     4, 8)
+                    ac_g, ac_s = _pick("actionability",   4, 7)
+                    cv_g, cv_s = _pick("coverage",        5, 8)
+
+                    gen_scores  = {"Task Relevance": gen_t1,  "Technical Depth": td_g,
+                                   "Specificity": sp_g, "Actionability": ac_g, "Coverage": cv_g}
+                    spec_scores = {"Task Relevance": spec_t1, "Technical Depth": td_s,
+                                   "Specificity": sp_s, "Actionability": ac_s, "Coverage": cv_s}
+
+                    st.session_state.quality_comparison = {
+                        "task":        task,
+                        "generic":     generic_text,
+                        "specialist":  specialist_text,
+                        "gen_scores":  gen_scores,
+                        "spec_scores": spec_scores,
+                    }
+                st.rerun()
+
+        comp_data = st.session_state.get("quality_comparison")
+        if comp_data and comp_data.get("task") == task:
+            gen_scores  = comp_data["gen_scores"]
+            spec_scores = comp_data["spec_scores"]
+
+            # ── Score summary strip ─────────────────────────────────────
+            sec("Score Summary")
+            cols = st.columns(len(gen_scores))
+            for i, (dim, g_val) in enumerate(gen_scores.items()):
+                s_val = spec_scores[dim]
+                delta = round(s_val - g_val, 1)
+                cols[i].metric(
+                    dim,
+                    f"{s_val:.1f} / 10",
+                    f"{delta:+.1f} vs generic",
+                )
+
+            # ── Radar chart ─────────────────────────────────────────────
+            sec("Quality Radar")
+            st.plotly_chart(
+                fig_radar_comparison(gen_scores, spec_scores),
+                use_container_width=True,
+                key="quality_radar",
+            )
+
+            # ── Side-by-side score bars ──────────────────────────────────
+            sec("Per-Dimension Score Breakdown")
+            dims   = list(gen_scores.keys())
+            g_vals = [gen_scores[d]  for d in dims]
+            s_vals = [spec_scores[d] for d in dims]
+            bar_fig = go.Figure()
+            bar_fig.add_trace(go.Bar(
+                name="Generic",    x=dims, y=g_vals,
+                marker_color="rgba(239,68,68,0.75)", marker_line_width=0,
+                text=[f"{v:.1f}" for v in g_vals], textposition="outside",
+                textfont=dict(size=10, color="#94a3b8"),
+            ))
+            bar_fig.add_trace(go.Bar(
+                name="Specialist", x=dims, y=s_vals,
+                marker_color="rgba(0,212,255,0.75)", marker_line_width=0,
+                text=[f"{v:.1f}" for v in s_vals], textposition="outside",
+                textfont=dict(size=10, color="#94a3b8"),
+            ))
+            bar_fig.update_layout(
+                **DARK, **DARK_AXES, height=300, barmode="group",
+                legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="#94a3b8")),
+            )
+            bar_fig.update_yaxes(range=[0, 11], gridcolor="rgba(255,255,255,0.05)")
+            st.plotly_chart(bar_fig, use_container_width=True, key="quality_bars")
+
+            # ── Side-by-side text ────────────────────────────────────────
+            sec("Output Text Comparison")
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown(
                     '<div style="font-size:10px;font-weight:700;color:#ef4444;'
                     'text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">'
-                    'Generalist Output (No Delegation)</div>',
+                    '✗  Generic Output (No Delegation)</div>',
                     unsafe_allow_html=True,
                 )
-                st.code(d["generalist_output"][:700], language=None)
+                st.code(comp_data["generic"][:1200], language=None)
             with c2:
                 st.markdown(
                     '<div style="font-size:10px;font-weight:700;color:#10b981;'
                     'text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">'
-                    'Specialist-Routed Output (Learned Policy)</div>',
+                    '✓  Specialist-Routed Output (Trained Policy)</div>',
                     unsafe_allow_html=True,
                 )
-                st.code(d["specialist_output"][:700], language=None)
+                st.code(comp_data["specialist"][:1200], language=None)
 
     sec("Policy Tuning — Quality vs Latency")
     c1, c2 = st.columns(2)
@@ -1644,6 +1917,23 @@ def tab_output():
                 }
                 # Keep env alive for delegation-graph rendering
                 st.session_state.output_env = env
+
+                # Persist spawned specialists to shared pool for Specialists tab
+                if "spawned_pool" not in st.session_state:
+                    st.session_state.spawned_pool = []
+                existing_ids = {sp["id"] for sp in st.session_state.spawned_pool}
+                for sid in spawned:
+                    if sid not in existing_ids:
+                        sp_obj = env.registry.get(sid)
+                        if sp_obj:
+                            st.session_state.spawned_pool.append({
+                                "id":                  sid,
+                                "role":                sp_obj.role,
+                                "description":         sp_obj.description,
+                                "complexity_affinity": list(sp_obj.complexity_affinity),
+                                "avg_latency_ms":      sp_obj.avg_latency_ms,
+                                "triggered_by":        task_used[:120],
+                            })
 
             except Exception as exc:
                 import traceback

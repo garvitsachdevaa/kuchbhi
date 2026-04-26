@@ -60,7 +60,7 @@ environment:
   max_delegation_depth: 2   # 2 for hackathon demo; architecture supports 4
   max_specialists_per_episode: 6
   specialist_timeout_ms: 8000
-  spawn_threshold: 0.50          # all-MiniLM-L6-v2 related-domain sims are 0.35–0.70; 0.50 triggers meaningfully
+  spawn_threshold: 0.40          # spawn when best specialist similarity < 0.40 (ML/adjacent tasks ~0.35, SE tasks ~0.55+)
   auto_spawn_specialists: true   # set false to disable spawning entirely
   spawn_max_total: 8             # hard cap on lifetime spawns — prevents registry bloat over 100k steps
   spawn_cooldown_episodes: 20    # minimum episodes between consecutive spawns

@@ -210,7 +210,9 @@ class SpindleFlowEnv(gym.Env):
 
         self.spawned_this_episode = []
         self._pending_spawn_records = []
-        # Spawning is now a learned action; no auto-spawn at reset.
+        # Auto-spawn: if no existing specialist covers this task well, create one via LLM.
+        if self.auto_spawn:
+            self._maybe_spawn_specialist(task_emb, task_desc)
 
         # ── Build per-episode active roster (top-K by task similarity) ──
         self.active_specialist_ids = self._select_active_specialists(task_emb)
