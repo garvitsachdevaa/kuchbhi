@@ -1,6 +1,6 @@
 """
 Animated robot orchestrator widget for the SpindleFlow RL demo.
-Exports one public function: render_orchestrator(state, height=620)
+Exports one public function: render_orchestrator(state, height=600)
 
 All HTML/CSS/JS is self-contained — no CDN, no external calls.
 Safe for Hugging Face Spaces iframe sandbox.
@@ -34,27 +34,47 @@ SPEC_ICONS = {
     "tech_writer":        "DOC",
 }
 
+_SPAWNED_COLOR   = "#fbbf24"   # gold for auto-spawned agents
+_FALLBACK_COLORS = [           # cycle through for multiple unknown agents
+    "#fbbf24", "#f472b6", "#34d399", "#fb923c", "#a78bfa",
+]
+
+
+def _agent_color(agent_id: str, spawned_ids: set) -> str:
+    if agent_id in SPEC_COLORS:
+        return SPEC_COLORS[agent_id]
+    if agent_id in spawned_ids:
+        return _SPAWNED_COLOR
+    # deterministic fallback based on hash
+    return _FALLBACK_COLORS[hash(agent_id) % len(_FALLBACK_COLORS)]
+
+
+def _agent_icon(agent_id: str, spawned_ids: set) -> str:
+    if agent_id in SPEC_ICONS:
+        return SPEC_ICONS[agent_id]
+    if agent_id in spawned_ids:
+        return "⚡"
+    return agent_id[:3].upper()
+
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
-def _agent_positions(agent_ids: list, canvas_w: int = 780, canvas_h: int = 560) -> dict:
-    """Return {agent_id: (x, y)} laid out in a right-side arc."""
-    arc_cx = canvas_w - 155
-    arc_cy = canvas_h / 2
-    arc_r  = 185
+def _agent_positions(agent_ids: list,
+                     canvas_w: int = 780,
+                     canvas_h: int = 560) -> dict:
+    """Return {agent_id: (x, y)} in a straight vertical column on the right."""
+    col_x = canvas_w - 115
     n = len(agent_ids)
+    if n == 0:
+        return {}
+    pad_top = 50
+    pad_bot = 50
+    usable  = canvas_h - pad_top - pad_bot
+    step    = usable / n
     positions = {}
-    angle_start, angle_end = -70, 70
     for i, aid in enumerate(agent_ids):
-        angle = 0 if n == 1 else angle_start + (angle_end - angle_start) * i / (n - 1)
-        rad = math.radians(angle)
-        x = arc_cx + arc_r * math.sin(rad)
-        y = arc_cy + arc_r * math.sin(rad) * 0.0 + arc_cy * 0 + \
-            arc_r * (-math.cos(math.radians(angle_start)) + (-math.cos(rad) + math.cos(math.radians(angle_start)))) + arc_cy - arc_cy
-        # Clean arc formula: spread vertically, push right
-        x = round(arc_cx + arc_r * math.sin(rad))
-        y = round(arc_cy - arc_r * math.cos(rad) + arc_r * math.cos(math.radians(angle_start)))
-        positions[aid] = (x, y)
+        y = round(pad_top + step * i + step / 2)
+        positions[aid] = (col_x, y)
     return positions
 
 
@@ -142,35 +162,42 @@ def _robot_svg() -> str:
 
 
 def _agent_card_svg(agent_id: str, x: int, y: int,
-                    status: str, color: str) -> str:
+                    status: str, color: str,
+                    is_spawned: bool = False) -> str:
     """Returns SVG <g> for one agent card. status: idle | active | done."""
-    icon  = SPEC_ICONS.get(agent_id, agent_id[:3].upper())
+    icon  = SPEC_ICONS.get(agent_id, ("⚡" if is_spawned else agent_id[:3].upper()))
     label = agent_id.replace("_", " ").title()
-    label = label[:16] + ("…" if len(label) > 16 else "")
+    label = label[:18] + ("…" if len(label) > 18 else "")
 
     status_class = {"idle": "agent-idle", "active": "agent-active",
                     "done": "agent-done"}.get(status, "agent-idle")
-    opacity = "1.0" if status != "idle" else "0.45"
+    opacity = "1.0" if status != "idle" else "0.40"
+    border  = "#fbbf24" if is_spawned else color
+    spawn_star = (
+        f'<text x="26" y="-26" text-anchor="middle" font-size="10" fill="#fbbf24">⚡</text>'
+        if is_spawned else ""
+    )
 
     return f"""
     <g class="agent-card {status_class}" transform="translate({x},{y})"
        id="agent-{agent_id}" opacity="{opacity}">
-      <circle cx="0" cy="0" r="38" fill="none"
-              stroke="{color}" stroke-width="1.5"
-              class="agent-ring" opacity="0.3"/>
-      <rect x="-30" y="-30" width="60" height="60" rx="12"
-            fill="#0a0f1a" stroke="{color}" stroke-width="1.5"
-            opacity="0.9"/>
-      <text x="0" y="6" text-anchor="middle" dominant-baseline="middle"
+      <circle cx="0" cy="0" r="36" fill="none"
+              stroke="{border}" stroke-width="1.5"
+              class="agent-ring" opacity="0.25"/>
+      <rect x="-26" y="-26" width="52" height="52" rx="10"
+            fill="#0a0f1a" stroke="{border}" stroke-width="1.5"
+            opacity="0.95"/>
+      <text x="0" y="5" text-anchor="middle" dominant-baseline="middle"
             fill="{color}" font-family="'JetBrains Mono', monospace"
-            font-size="12" font-weight="700">{icon}</text>
-      <circle cx="22" cy="-22" r="5" fill="{color}" class="status-dot"/>
-      <text x="0" y="46" text-anchor="middle"
+            font-size="11" font-weight="700">{icon}</text>
+      {spawn_star}
+      <circle cx="20" cy="-20" r="5" fill="{color}" class="status-dot"/>
+      <text x="0" y="40" text-anchor="middle"
             fill="#64748b" font-family="system-ui, sans-serif"
-            font-size="9" letter-spacing="0.5">{label}</text>
+            font-size="8.5" letter-spacing="0.3">{label}</text>
       <g class="done-check" opacity="0">
-        <circle cx="22" cy="-22" r="7" fill="#10b981"/>
-        <text x="22" y="-18" text-anchor="middle" fill="white" font-size="9">✓</text>
+        <circle cx="20" cy="-20" r="7" fill="#10b981"/>
+        <text x="20" y="-16" text-anchor="middle" fill="white" font-size="9">✓</text>
       </g>
     </g>
     """
@@ -184,14 +211,14 @@ def _beam_svg(edges: list, agent_positions: dict) -> str:
         if callee not in agent_positions:
             continue
         tx, ty = agent_positions[callee]
-        color  = SPEC_COLORS.get(callee, "#00d4ff")
+        color  = SPEC_COLORS.get(callee, _SPAWNED_COLOR)
         lines.append(f"""
         <line id="beam-{callee}"
               x1="{robot_hand_x}" y1="{robot_hand_y}" x2="{tx}" y2="{ty}"
               stroke="{color}" stroke-width="1.5" stroke-linecap="round"
-              opacity="0.6" stroke-dasharray="6 4" class="beam-line beam-animate"/>
+              opacity="0.55" stroke-dasharray="6 4" class="beam-line beam-animate"/>
         <circle id="dot-{callee}" r="4" fill="{color}" opacity="0.9" class="beam-dot">
-          <animateMotion dur="0.8s" repeatCount="indefinite"
+          <animateMotion dur="0.9s" repeatCount="indefinite"
                          path="M {robot_hand_x},{robot_hand_y} L {tx},{ty}"/>
         </circle>
         <circle id="burst-{callee}" cx="{tx}" cy="{ty}" r="8"
@@ -215,15 +242,15 @@ def _html_template(*, agents_svg, beams_svg, robot_svg, state_json,
 
   .canvas-wrap {{
     position: relative; width: 100%; height: 560px;
-    background: radial-gradient(ellipse at 30% 50%, rgba(0,212,255,0.04) 0%, transparent 60%),
-                radial-gradient(ellipse at 80% 50%, rgba(124,58,237,0.03) 0%, transparent 50%),
+    background: radial-gradient(ellipse at 25% 50%, rgba(0,212,255,0.04) 0%, transparent 60%),
+                radial-gradient(ellipse at 85% 50%, rgba(124,58,237,0.03) 0%, transparent 50%),
                 #080d14;
     border-radius: 16px; border: 1px solid rgba(0,212,255,0.1); overflow: hidden;
   }}
   .canvas-wrap::before {{
     content: ''; position: absolute; inset: 0;
-    background-image: linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
-                      linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+    background-image: linear-gradient(rgba(0,212,255,0.025) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(0,212,255,0.025) 1px, transparent 1px);
     background-size: 40px 40px; border-radius: 16px; pointer-events: none;
   }}
   svg.main-svg {{ position: absolute; top: 0; left: 0; width: 100%; height: 100%; }}
@@ -239,12 +266,12 @@ def _html_template(*, agents_svg, beams_svg, robot_svg, state_json,
   .info-badge .value {{ font-weight: 700; color: #94a3b8; }}
   .task-text {{ flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #475569; font-size: 10px; }}
 
-  .orch-label {{ position: absolute; top: 20px; left: 20px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #00d4ff; opacity: 0.7; }}
-  .agents-label {{ position: absolute; top: 20px; right: 20px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #475569; opacity: 0.7; }}
+  .orch-label   {{ position: absolute; top: 18px; left: 18px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #00d4ff; opacity: 0.7; }}
+  .agents-label {{ position: absolute; top: 18px; right: 18px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #475569; opacity: 0.7; }}
 
   .divider-line {{
-    position: absolute; left: 50%; top: 10%; height: 80%; width: 1px;
-    background: linear-gradient(to bottom, transparent, rgba(0,212,255,0.15), transparent);
+    position: absolute; left: 47%; top: 8%; height: 84%; width: 1px;
+    background: linear-gradient(to bottom, transparent, rgba(0,212,255,0.12), transparent);
   }}
 
   /* Robot animations */
@@ -276,11 +303,11 @@ def _html_template(*, agents_svg, beams_svg, robot_svg, state_json,
   .agent-done .status-dot {{ fill: #10b981 !important; }}
   .agent-done .done-check {{ opacity: 1 !important; }}
 
-  @keyframes ring-expand {{ from {{ r:30px; opacity:0.6; }} to {{ r:52px; opacity:0; }} }}
+  @keyframes ring-expand {{ from {{ r:28px; opacity:0.6; }} to {{ r:48px; opacity:0; }} }}
   .agent-active .agent-ring {{ animation: ring-expand 1s ease-out infinite; }}
 
   /* Beam animations */
-  @keyframes beam-draw {{ from {{ stroke-dashoffset:200; opacity:0; }} to {{ stroke-dashoffset:0; opacity:0.6; }} }}
+  @keyframes beam-draw {{ from {{ stroke-dashoffset:200; opacity:0; }} to {{ stroke-dashoffset:0; opacity:0.55; }} }}
   .beam-animate {{ stroke-dasharray: 6 4; animation: beam-draw 0.4s ease-out forwards; }}
 
   @keyframes burst-expand {{ 0% {{ r:8px; opacity:0.9; stroke-width:3px; }} 100% {{ r:28px; opacity:0; stroke-width:1px; }} }}
@@ -288,6 +315,12 @@ def _html_template(*, agents_svg, beams_svg, robot_svg, state_json,
 
   .robot-thinking .core-spin {{ animation-duration: 1.2s !important; }}
   .robot-thinking .antenna-pulse {{ animation: antenna-blink 0.6s ease-in-out infinite !important; }}
+
+  /* Sequential reveal */
+  @keyframes slide-in-right {{
+    from {{ opacity: 0; transform: translateX(22px); }}
+    to   {{ opacity: 1; transform: translateX(0); }}
+  }}
 
   #particles {{ position: absolute; top: 0; left: 0; width: 100%; height: 560px; pointer-events: none; }}
 </style>
@@ -340,6 +373,21 @@ if (STATE.robot_state === 'delegating' && armRight) {{
   armRight.classList.add('arm-delegating');
 }}
 
+// Sequential reveal: agents appear one-by-one with staggered delays
+if (STATE.mode === 'SEQUENTIAL' && !STATE.done && STATE.called.length > 0) {{
+  STATE.called.forEach(function(agentId, idx) {{
+    var el = document.getElementById('agent-' + agentId);
+    if (!el) return;
+    el.style.opacity = '0';
+    (function(element, delay) {{
+      setTimeout(function() {{
+        element.style.transition = 'opacity 0.5s ease';
+        element.style.opacity = '1';
+      }}, delay);
+    }})(el, 250 + idx * 650);
+  }});
+}}
+
 function spawnParticles(x, y, color) {{
   const canvas = document.getElementById('particles');
   if (!canvas) return;
@@ -371,7 +419,6 @@ function spawnParticles(x, y, color) {{
 if (STATE.active) {{
   const activeEl = document.getElementById('agent-' + STATE.active);
   if (activeEl) {{
-    const svg   = document.querySelector('.main-svg');
     const wrap  = document.getElementById('canvas-wrap');
     const wRect = wrap.getBoundingClientRect();
     const ct    = activeEl.getCTM();
@@ -407,30 +454,41 @@ if (STATE.active) {{
 # ── State assembler ───────────────────────────────────────────────────────────
 
 def _build_html(state: dict) -> str:
-    called     = state.get("called", [])
-    active     = state.get("active", "")
-    edges      = state.get("edges", [])
-    task       = state.get("task", "")
-    step       = state.get("step", 0)
-    mode       = state.get("mode", "SEQUENTIAL")
-    done       = state.get("done", False)
-    reward     = state.get("reward", None)
-    phase      = state.get("phase", 1)
+    called      = state.get("called", [])
+    active      = state.get("active", "")
+    edges       = state.get("edges", [])
+    task        = state.get("task", "")
+    step        = state.get("step", 0)
+    mode        = state.get("mode", "SEQUENTIAL")
+    done        = state.get("done", False)
+    reward      = state.get("reward", None)
+    phase       = state.get("phase", 1)
+    spawned_ids = set(state.get("spawned", []))
 
-    all_agents = list(SPEC_COLORS.keys())
-    positions  = _agent_positions(all_agents)
+    # Show only agents that were actually called (+ active if mid-step)
+    all_agents = list(called)
+    if active and active not in all_agents:
+        all_agents.append(active)
+
+    # Nothing delegated yet — robot is idle/thinking, no agent cards needed
+    positions = _agent_positions(all_agents) if all_agents else {}
 
     def agent_status(aid):
-        if aid == active:   return "active"
-        if aid in called:   return "done"
+        if aid == active: return "active"
+        if aid in called: return "done"
         return "idle"
 
     agents_svg = "\n".join(
-        _agent_card_svg(aid, *positions[aid], agent_status(aid), SPEC_COLORS[aid])
+        _agent_card_svg(
+            aid, *positions[aid],
+            agent_status(aid),
+            _agent_color(aid, spawned_ids),
+            is_spawned=(aid in spawned_ids),
+        )
         for aid in all_agents
     )
-    beams_svg  = _beam_svg(edges, positions)
-    robot_svg  = _robot_svg()
+    beams_svg = _beam_svg(edges, positions)
+    robot_svg = _robot_svg()
 
     robot_state = (
         "delegating" if active else
@@ -463,6 +521,7 @@ def _build_html(state: dict) -> str:
         "step":        step,
         "done":        done,
         "mode":        mode,
+        "spawned":     list(spawned_ids),
     })
 
     return _html_template(
@@ -481,21 +540,21 @@ def _build_html(state: dict) -> str:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def render_orchestrator(state: dict, height: int = 620) -> None:
+def render_orchestrator(state: dict, height: int = 600) -> None:
     """
     Render the animated robot orchestrator widget in a Streamlit page.
-    Call this wherever the delegation graph currently renders.
 
     state keys:
-      called  — list of specialist IDs called so far this episode
-      active  — specialist being called right now (or "")
-      edges   — list of [caller_id, callee_id] pairs
-      task    — task description string
-      step    — current step number
-      mode    — delegation mode name (e.g. "SEQUENTIAL")
-      done    — whether the episode is finished
-      reward  — cumulative reward float (or None)
-      phase   — curriculum phase int
+      called   — list of specialist IDs called so far this episode
+      active   — specialist being called right now (or "")
+      edges    — list of [caller_id, callee_id] pairs
+      task     — task description string
+      step     — current step number
+      mode     — delegation mode name (e.g. "SEQUENTIAL")
+      done     — whether the episode is finished
+      reward   — cumulative reward float (or None)
+      phase    — curriculum phase int
+      spawned  — list of auto-spawned specialist IDs (shown in gold)
     """
     import streamlit.components.v1 as components
     components.html(_build_html(state), height=height, scrolling=False)

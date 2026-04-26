@@ -841,12 +841,13 @@ html, body, [data-testid="stAppViewContainer"] {
 .stButton > button {
     border-radius: 8px !important; font-weight: 600 !important;
     font-size: 13px !important; transition: all .18s !important;
-    border: 1px solid rgba(255,255,255,0.09) !important;
-    background: rgba(255,255,255,0.04) !important; color: #e2e8f0 !important;
+    border: 1px solid rgba(255,255,255,0.18) !important;
+    background: rgba(255,255,255,0.10) !important; color: #e2e8f0 !important;
 }
 .stButton > button:hover {
-    background: rgba(255,255,255,0.08) !important;
-    border-color: rgba(0,212,255,0.28) !important;
+    background: rgba(255,255,255,0.18) !important;
+    border-color: rgba(0,212,255,0.45) !important;
+    color: #ffffff !important;
 }
 .stButton > button[kind="primary"] {
     background: linear-gradient(135deg,#00d4ff,#0092bb) !important;
@@ -905,31 +906,14 @@ def hero():
   <div style="position:absolute;bottom:-60px;left:15%;width:280px;height:280px;
               background:radial-gradient(circle,rgba(0,212,255,0.07) 0%,transparent 70%);
               pointer-events:none;"></div>
-  <div style="font-size:26px;font-weight:800;
+  <div style="font-size:28px;font-weight:800;
               background:linear-gradient(90deg,#00d4ff,#7c3aed,#00d4ff);
               background-size:200% auto;-webkit-background-clip:text;
               -webkit-text-fill-color:transparent;background-clip:text;
-              margin:0 0 6px;">SpindleFlow RL</div>
-  <div style="color:#64748b;font-size:13px;margin:0 0 18px;">
+              margin:0 0 8px;">SpindleFlow RL</div>
+  <div style="color:#64748b;font-size:13px;margin:0;">
     Delegation Policy Learning Environment &mdash;
     Teaching orchestrators to route, specialize, and stop.
-  </div>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;">
-    <span style="padding:3px 11px;border-radius:999px;font-size:10px;font-weight:700;
-                 background:rgba(0,212,255,0.1);color:#00d4ff;
-                 border:1px solid rgba(0,212,255,0.22);">OPENENV v0</span>
-    <span style="padding:3px 11px;border-radius:999px;font-size:10px;font-weight:700;
-                 background:rgba(124,58,237,0.1);color:#a78bfa;
-                 border:1px solid rgba(124,58,237,0.22);">LSTM PPO</span>
-    <span style="padding:3px 11px;border-radius:999px;font-size:10px;font-weight:700;
-                 background:rgba(16,185,129,0.1);color:#34d399;
-                 border:1px solid rgba(16,185,129,0.22);">22/22 TESTS</span>
-    <span style="padding:3px 11px;border-radius:999px;font-size:10px;font-weight:700;
-                 background:rgba(245,158,11,0.1);color:#fbbf24;
-                 border:1px solid rgba(245,158,11,0.22);">HACKATHON 2026</span>
-    <span style="padding:3px 11px;border-radius:999px;font-size:10px;font-weight:700;
-                 background:rgba(16,185,129,0.08);color:#34d399;
-                 border:1px solid rgba(16,185,129,0.25);">GENERIC MULTI-SECTOR</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -1810,6 +1794,7 @@ def tab_architecture():
 # ─────────────────────────────────────────────────────────
 def tab_output():
     """Run the trained LSTM PPO policy on a custom task and show every specialist's output."""
+    hero()
     st.markdown(
         '<div style="font-size:12px;color:#64748b;margin-bottom:16px;">'
         'Enter any software engineering task. The trained LSTM PPO policy decides which '
@@ -1873,6 +1858,8 @@ def tab_output():
                 done           = False
                 rewards: list[float] = []
 
+                MIN_SPECIALISTS = 4  # suppress STOP until this many specialists called
+
                 for _ in range(15):
                     if done:
                         break
@@ -1888,7 +1875,22 @@ def tab_output():
                         episode_start=episode_starts,
                         deterministic=True,
                     )
-                    action = action_batch[0]
+                    action = action_batch[0].copy()
+                    called_set = set(env.called_ids)
+                    if len(called_set) < MIN_SPECIALISTS:
+                        # The policy may want to STOP early; when it does, its
+                        # specialist-selection logits are all low/negative so
+                        # simply zeroing action[0] still produces garbage selection.
+                        # Fix: build a fresh action that directly picks the first
+                        # uncalled specialist with a hard positive logit (1.0).
+                        roster = env.active_specialist_ids
+                        uncalled = [sid for sid in roster if sid not in called_set]
+                        if uncalled:
+                            action = np.zeros(env.action_space.shape, dtype=np.float32)
+                            action[0] = 0.0  # MetaAction.CALL_SPECIALIST
+                            idx = roster.index(uncalled[0])
+                            if 1 + idx < len(action):
+                                action[1 + idx] = 1.0
                     obs, r, term, trunc, _ = env.step(action)
                     rewards.append(float(r))
                     done = term or trunc
@@ -1897,7 +1899,7 @@ def tab_output():
                 called  = list(env.called_ids)
                 edges   = [(e.caller_id, e.callee_id)
                            for e in env.delegation_graph.get_delegation_path()]
-                spawned = list(getattr(env, "spawned_specialists", []))
+                spawned = list(getattr(env, "spawned_this_episode", []))
 
                 st.session_state.output_results = {
                     "task":    task_used,
@@ -1975,6 +1977,21 @@ def tab_output():
     mc2.metric("Steps",              len(results["rewards"]))
     mc3.metric("Specialists Called", len(results["called"]))
     mc4.metric("Auto-Spawned",       len(results["spawned"]))
+
+    # Orchestrator widget
+    sec("Orchestrator  ·  Delegation Visualization")
+    render_orchestrator({
+        "called":  results["called"],
+        "active":  "",
+        "edges":   results["edges"],
+        "task":    results["task"],
+        "step":    len(results["rewards"]),
+        "mode":    "SEQUENTIAL",
+        "done":    True,
+        "reward":  sum(results["rewards"]),
+        "phase":   int(st.session_state.get("output_phase", 2)),
+        "spawned": results["spawned"],
+    })
 
     # Delegation graph
     sec("Delegation Graph")
@@ -2063,26 +2080,25 @@ def tab_output():
 # ─────────────────────────────────────────────────────────
 def main():
     inject_css()
-    hero()
     S = _S()
     render_live_stats(S)
 
     t1, t2, t3, t4, t5, t6, t7 = st.tabs([
-        "⚡ Live Demo",
+        "🎯 Output",
+        "⚡ Training Interface Example",
         "🤖 Specialists",
         "📈 Training",
         "🔍 Quality Demo",
         "🧪 Reward Lab",
         "🏗 Architecture",
-        "🎯 Output",
     ])
-    with t1: tab_live_demo()
-    with t2: tab_specialists()
-    with t3: tab_training()
-    with t4: tab_quality()
-    with t5: tab_reward_lab()
-    with t6: tab_architecture()
-    with t7: tab_output()
+    with t1: tab_output()
+    with t2: tab_live_demo()
+    with t3: tab_specialists()
+    with t4: tab_training()
+    with t5: tab_quality()
+    with t6: tab_reward_lab()
+    with t7: tab_architecture()
 
 
 # Guard allows safe imports for testing without triggering the UI.
