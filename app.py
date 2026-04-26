@@ -19,19 +19,21 @@ print("=== PYTHON STARTED ===", flush=True)
 
 # ── Force CUDA torch before any `import torch` happens in this process ─────────
 # requirements.txt installs CPU torch as a transitive dep of sentence-transformers.
-# --force-reinstall overrides "already satisfied"; --no-deps only touches torch.
+# --force-reinstall overrides "already satisfied" and also installs nvidia-cudnn-cu12
+# and other CUDA runtime packages needed by the LSTM kernel (cuDNN).
 # This subprocess runs before gradio (and therefore before any torch import).
-print("Installing CUDA torch (force)...", flush=True)
+print("Installing CUDA torch + cuDNN...", flush=True)
 _cuda_r = subprocess.run(
     [sys.executable, "-m", "pip", "install", "-q",
-     "--force-reinstall", "--no-deps",
+     "--force-reinstall",
      "--index-url", "https://download.pytorch.org/whl/cu121",
+     "--extra-index-url", "https://pypi.org/simple",
      "torch"],
     capture_output=True, text=True,
-    timeout=300,
+    timeout=600,
 )
 if _cuda_r.returncode == 0:
-    print("CUDA torch installed OK.", flush=True)
+    print("CUDA torch + cuDNN installed OK.", flush=True)
 else:
     print("CUDA torch install FAILED:", _cuda_r.stderr[-400:], flush=True)
 
